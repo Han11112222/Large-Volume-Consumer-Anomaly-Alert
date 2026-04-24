@@ -118,7 +118,7 @@ USE_COL_TO_GROUP: Dict[str, str] = {
 
 COLOR_ACT = "rgba(0, 150, 255, 1)"
 COLOR_PREV = "rgba(190, 190, 190, 1)"
-COLOR_ALARM = [211, 47, 47, 200]  # 지도 시각화용 붉은색
+COLOR_ALARM = [211, 47, 47, 200]
 
 def clean_korean_finance_number(val):
     if pd.isna(val): return 0.0
@@ -206,19 +206,17 @@ def build_long_dict(sheets: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
         long_dict["열량"] = make_long(sheets["계획_열량"], sheets["실적_열량"])
     return long_dict
 
-# 📍 안전한 CSV 로드 함수 (인코딩 및 공백 이슈 방지)
 def load_safe_csv(file_bytes) -> pd.DataFrame:
     encodings = ["utf-8-sig", "cp949", "utf-8", "euc-kr"]
     for enc in encodings:
         try:
             df = pd.read_csv(io.BytesIO(file_bytes), encoding=enc, thousands=',')
-            df.columns = df.columns.str.strip() # 헤더의 숨은 공백 제거
+            df.columns = df.columns.str.strip() 
             return df
         except Exception:
             pass
     return pd.DataFrame()
 
-# 📍 주소를 위경도로 변환하는 캐싱 함수 (카카오 API)
 @st.cache_data(show_spinner=False)
 def geocode_address(address: str, api_key: str = "") -> Tuple[float, float]:
     if pd.isna(address) or not str(address).strip():
@@ -232,7 +230,6 @@ def geocode_address(address: str, api_key: str = "") -> Tuple[float, float]:
                 return float(res['documents'][0]['y']), float(res['documents'][0]['x'])
         except Exception:
             pass
-    # API 키가 없거나 변환 실패 시 대구 지역(위도 35.8, 경도 128.6 주변) 임의 좌표 생성 (테스트용)
     lat = 35.8714 + random.uniform(-0.06, 0.06)
     lon = 128.6014 + random.uniform(-0.06, 0.06)
     return lat, lon
@@ -315,15 +312,15 @@ if not df_csv.empty:
         
 comments_db = load_comments_db()
         
-rpt_tabs = st.tabs(["열량 기준 (TJ)", "부피 기준 (천m³)"])
+rpt_tabs = st.tabs(["열량 기준 (GJ)", "부피 기준 (천m³)"])
 
 for idx, rpt_tab in enumerate(rpt_tabs):
     with rpt_tab:
         if idx == 0:
             df_long_rpt = long_dict_rpt.get("열량", pd.DataFrame())
-            unit_str = "TJ"
+            unit_str = "GJ"
             val_col = "사용량(mj)"
-            key_sfx = "_tj"
+            key_sfx = "_gj"
         else:
             df_long_rpt = long_dict_rpt.get("부피", pd.DataFrame())
             unit_str = "천m³"
@@ -334,7 +331,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         
         years_available = [2024, 2025, 2026]
         default_y_index = len(years_available) - 1
-        default_m_index = 2 # 기본값 3월
+        default_m_index = 2 
         
         if not df_long_rpt.empty:
             years_available = sorted(df_long_rpt["연"].unique().tolist())
@@ -345,15 +342,14 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 default_y_index = years_available.index(max_year) if max_year in years_available else len(years_available) - 1
                 default_m_index = int(max_month - 1)
                 
-        # 🟢 완벽한 에러 방지(Fail-safe)
         df_csv_tab = df_csv.copy()
         if not df_csv_tab.empty:
             df_csv_tab["연_csv"] = 2026
             df_csv_tab["월_csv"] = 3
             
-            # MJ 단위를 TJ 로 변환 (1,000,000으로 나눔)
-            if unit_str == "TJ" and "사용량(mj)" in df_csv_tab.columns:
-                df_csv_tab["사용량(mj)"] = pd.to_numeric(df_csv_tab["사용량(mj)"], errors="coerce").fillna(0) / 1000000.0
+            # 🟢 GJ로 복구 (1000.0 으로 나눔)
+            if unit_str == "GJ" and "사용량(mj)" in df_csv_tab.columns:
+                df_csv_tab["사용량(mj)"] = pd.to_numeric(df_csv_tab["사용량(mj)"], errors="coerce").fillna(0) / 1000.0
             elif unit_str == "천m³" and "사용량(m3)" in df_csv_tab.columns:
                 df_csv_tab["사용량(m3)"] = pd.to_numeric(df_csv_tab["사용량(m3)"], errors="coerce").fillna(0) / 1000.0
                 
@@ -396,126 +392,139 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("<hr style='margin: 10px 0 30px 0;'>", unsafe_allow_html=True)
 
         # ─────────────────────────────────────────────────────────
-        # 1, 2. 용도별 판매량 분석
+        # 통합된 용도별 분석 함수 (모든 요소 포함)
         # ─────────────────────────────────────────────────────────
-        def render_usage_trend_report(usage_name, section_num, key_sfx, db_key):
+        def render_full_usage_report(usage_name, section_num, key_sfx, db_key):
+            st.markdown(f"""<div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;"><h4 style="margin: 0;">📈 {section_num}. 용도별 판매량 분석 : {usage_name}</h4></div>""", unsafe_allow_html=True)
+            
             if df_long_rpt.empty:
-                st.markdown(f"#### 📈 {section_num}. 용도별 판매량 분석 : {usage_name}")
                 st.info("판매량 엑셀 데이터가 없습니다.")
-                return ""
-            else:
-                df_u = df_long_rpt[(df_long_rpt["그룹"] == usage_name) & (df_long_rpt["월"] <= max_month)]
+                return
                 
-                p_curr_act = df_u[(df_u["연"] == sel_year_rpt) & (df_u["계획/실적"] == "실적")].groupby("월")["값"].sum()
-                p_prev_act = df_u[(df_u["연"] == sel_year_rpt-1) & (df_u["계획/실적"] == "실적")].groupby("월")["값"].sum()
-                
-                sum_act = p_curr_act.sum()
-                sum_prev = p_prev_act.sum()
-                
-                diff_prev = sum_act - sum_prev
-                rate_prev = (sum_act / sum_prev * 100) if sum_prev > 0 else 0
-                sign_prev = "+" if diff_prev > 0 else ""
-                
-                st.markdown(f"""<div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;"><h4 style="margin: 0;">📈 {section_num}. 용도별 판매량 분석 : {usage_name}</h4></div>""", unsafe_allow_html=True)
-                
-                months_list = list(range(1, max_month + 1))
-                col_c, col_m = st.columns([1, 2.5])
-                
-                with col_c:
-                    st.markdown(f"**■ 누적 실적 비교 ({max_month}월 누적)**")
-                    st.markdown(
-                        f"""
-                        <div style="background-color: #e2e8f0; border-left: 5px solid #1e3a8a; padding: 10px 10px; margin-bottom: 0px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                            <div style="font-size: 14.5px; color: #1e3a8a; font-weight: 700; line-height: 1.5;">
-                                당해 실적: {sum_act:,.0f} {unit_str}<br>
-                                전년대비: {sign_prev}{diff_prev:,.0f} ({rate_prev:.1f}%)
-                            </div>
+            df_u = df_long_rpt[(df_long_rpt["그룹"] == usage_name) & (df_long_rpt["월"] <= max_month)]
+            
+            p_curr_act = df_u[(df_u["연"] == sel_year_rpt) & (df_u["계획/실적"] == "실적")].groupby("월")["값"].sum()
+            p_prev_act = df_u[(df_u["연"] == sel_year_rpt-1) & (df_u["계획/실적"] == "실적")].groupby("월")["값"].sum()
+            
+            sum_act = p_curr_act.sum()
+            sum_prev = p_prev_act.sum()
+            
+            diff_prev = sum_act - sum_prev
+            rate_prev = (sum_act / sum_prev * 100) if sum_prev > 0 else 0
+            sign_prev = "+" if diff_prev > 0 else ""
+            
+            months_list = list(range(1, max_month + 1))
+            
+            # --- 1 & 2. 누적 비교 / 월별 비교 ---
+            col_c, col_m = st.columns([1, 2.5])
+            with col_c:
+                st.markdown(f"**■ 누적 실적 비교 ({max_month}월 누적)**")
+                st.markdown(
+                    f"""
+                    <div style="background-color: #e2e8f0; border-left: 5px solid #1e3a8a; padding: 10px 10px; margin-bottom: 0px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                        <div style="font-size: 14.5px; color: #1e3a8a; font-weight: 700; line-height: 1.5;">
+                            당해 실적: {sum_act:,.0f} {unit_str}<br>
+                            전년대비: {sign_prev}{diff_prev:,.0f} ({rate_prev:.1f}%)
                         </div>
-                        """, unsafe_allow_html=True
-                    )
-                    
-                    fig_c = go.Figure()
-                    fig_c.add_trace(go.Bar(x=[f"{sel_year_rpt}년<br>실적", f"{sel_year_rpt-1}년<br>실적"],
-                                           y=[sum_act, sum_prev],
-                                           marker_color=[COLOR_ACT, COLOR_PREV],
-                                           text=[f"{sum_act:,.0f}", f"{sum_prev:,.0f}"],
-                                           textposition='auto', textfont=dict(size=14)))
-                    fig_c.update_layout(margin=dict(t=25, b=10, l=10, r=10), height=420, showlegend=False)
-                    st.plotly_chart(fig_c, use_container_width=True)
-                    
-                with col_m:
-                    st.markdown("**■ 월별 실적 비교 (YoY)**")
-                    st.markdown("<div style='padding: 1px; margin-bottom: 27px; line-height: 1.5;'>&nbsp;<br>&nbsp;</div>", unsafe_allow_html=True)
-                    
-                    fig_m = go.Figure()
-                    vals_act = [p_curr_act.get(m, 0) for m in months_list]
-                    vals_prev = [p_prev_act.get(m, 0) for m in months_list]
-                    
-                    fig_m.add_trace(go.Bar(x=months_list, y=vals_act, name=f'{sel_year_rpt}년 실적', marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in vals_act], textposition='auto', textfont=dict(size=11)))
-                    fig_m.add_trace(go.Bar(x=months_list, y=vals_prev, name=f'{sel_year_rpt-1}년 실적', marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in vals_prev], textposition='auto', textfont=dict(size=11)))
-                    
-                    fig_m.update_layout(barmode='group', xaxis=dict(tickmode='linear', tick0=1, dtick=1), xaxis_title="월", yaxis_title=f"판매량({unit_str})", margin=dict(t=10, b=10, l=10, r=10), height=420, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                    st.plotly_chart(fig_m, use_container_width=True)
-                    
-                render_comment_section(f"📝 {usage_name} 세부 코멘트 작성", db_key, curr_db, comments_db, 100, f"{usage_name}의 월별 편차 원인 및 특이사항을 기록하세요.", f"{usage_name}_{key_sfx}")
-                st.markdown("<br>", unsafe_allow_html=True)
+                    </div>
+                    """, unsafe_allow_html=True
+                )
+                
+                fig_c = go.Figure()
+                fig_c.add_trace(go.Bar(x=[f"{sel_year_rpt}년<br>실적", f"{sel_year_rpt-1}년<br>실적"],
+                                       y=[sum_act, sum_prev],
+                                       marker_color=[COLOR_ACT, COLOR_PREV],
+                                       text=[f"{sum_act:,.0f}", f"{sum_prev:,.0f}"],
+                                       textposition='auto', textfont=dict(size=14)))
+                fig_c.update_layout(margin=dict(t=25, b=10, l=10, r=10), height=420, showlegend=False)
+                st.plotly_chart(fig_c, use_container_width=True)
+                
+            with col_m:
+                st.markdown("**■ 월별 실적 비교 (YoY)**")
+                st.markdown("<div style='padding: 1px; margin-bottom: 27px; line-height: 1.5;'>&nbsp;<br>&nbsp;</div>", unsafe_allow_html=True)
+                
+                fig_m = go.Figure()
+                vals_act = [p_curr_act.get(m, 0) for m in months_list]
+                vals_prev = [p_prev_act.get(m, 0) for m in months_list]
+                
+                fig_m.add_trace(go.Bar(x=months_list, y=vals_act, name=f'{sel_year_rpt}년 실적', marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in vals_act], textposition='auto', textfont=dict(size=11)))
+                fig_m.add_trace(go.Bar(x=months_list, y=vals_prev, name=f'{sel_year_rpt-1}년 실적', marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in vals_prev], textposition='auto', textfont=dict(size=11)))
+                
+                fig_m.update_layout(barmode='group', xaxis=dict(tickmode='linear', tick0=1, dtick=1), xaxis_title="월", yaxis_title=f"판매량({unit_str})", margin=dict(t=10, b=10, l=10, r=10), height=420, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                st.plotly_chart(fig_m, use_container_width=True)
 
-
-        # ─────────────────────────────────────────────────────────
-        # 1.2, 2.2 별첨 현황 
-        # ─────────────────────────────────────────────────────────
-        def render_attachment_report(usage_label, section_num, key_sfx):
-            st.markdown(f"##### 📎 {section_num}. 별첨 ({usage_label})")
-            
-            if df_csv_tab.empty or val_col not in df_csv_tab.columns:
-                st.warning(f"⚠️ 업종별 상세 데이터를 보려면 '{unit_str}' 단위에 맞는 데이터({val_col} 컬럼 포함)를 CSV로 업로드해주세요.")
-                return
-
-            if "상품명" in df_csv_tab.columns:
-                csv_products_att = df_csv_tab["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
-            else:
-                csv_products_att = pd.Series([""] * len(df_csv_tab))
-                st.warning("⚠️ 파일에 '상품명' 컬럼이 없어 분류가 일부 제한될 수 있습니다.")
-            
-            if usage_label == "산업용":
-                df_sub = df_csv_tab[csv_products_att == "산업용"].copy()
-            else: 
-                valid_biz_att = ["냉난방용(업무)", "업무난방용", "주한미군"]
-                df_sub = df_csv_tab[csv_products_att.isin(valid_biz_att)].copy()
-                if "업종분류" in df_sub.columns: df_sub["업종"] = df_sub["업종분류"]
-            
-            if df_sub.empty:
-                st.info(f"업로드된 CSV 내에 '{usage_label}' 용도 데이터가 존재하지 않습니다.")
-                return
-            
-            df_sub_filtered = df_sub[df_sub["월_csv"] <= max_month]
-            
-            # 🟢 에러 원천 차단 로직: 엑셀 데이터가 없을 경우 tgt_c, tgt_p를 0으로 강제 세팅
-            if df_long_rpt.empty:
-                tgt_c = 0
-                tgt_p = 0
-            else:
-                df_u_target = df_long_rpt[(df_long_rpt["그룹"] == usage_label) & (df_long_rpt["월"] <= max_month)]
-                tgt_c = df_u_target[(df_u_target["연"] == sel_year_rpt) & (df_u_target["계획/실적"] == "실적")]["값"].sum()
-                tgt_p = df_u_target[(df_u_target["연"] == sel_year_rpt-1) & (df_u_target["계획/실적"] == "실적")]["값"].sum()
+            # --- 3. 세부 업종별 판매량 비교 (3번째 그래프 복구) ---
+            if not df_csv_tab.empty and val_col in df_csv_tab.columns:
+                st.markdown(f"**■ 세부 업종별 판매량 비교 (당해연도 vs 전년도)**")
                 
-            st.markdown(f"**■ 🏢 {usage_label} 세부 업종별 비교표**")
-            if "업종" in df_sub_filtered.columns:
-                curr_ind_grp = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt].groupby("업종", as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
-                prev_ind_grp = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt - 1].groupby("업종", as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt-1}년"})
-                
-                ind_comp = pd.merge(curr_ind_grp, prev_ind_grp, on="업종", how="outer").fillna(0)
-                diff_c = ind_comp[f"{sel_year_rpt}년"].sum() - tgt_c
-                diff_p = ind_comp[f"{sel_year_rpt-1}년"].sum() - tgt_p
-                
-                sort_option = st.radio("표 정렬 기준", ["당해연도 판매량 순", "전년대비 증감량 순"], horizontal=True, key=f"sort_{usage_label}{key_sfx}")
-                
-                if sort_option == "당해연도 판매량 순":
-                    ind_comp = ind_comp.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
+                if "상품명" in df_csv_tab.columns:
+                    csv_products = df_csv_tab["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
                 else:
-                    ind_comp["temp_diff"] = ind_comp[f"{sel_year_rpt}년"] - ind_comp[f"{sel_year_rpt-1}년"]
-                    ind_comp = ind_comp.sort_values("temp_diff", ascending=False).reset_index(drop=True)
-                    ind_comp = ind_comp.drop(columns=["temp_diff"])
+                    csv_products = pd.Series([""] * len(df_csv_tab))
+
+                if usage_name == "산업용":
+                    df_sub_filtered = df_csv_tab[(csv_products == "산업용") & (df_csv_tab["월_csv"] <= max_month)].copy()
+                    grp_col = "업종"
+                else: 
+                    valid_biz_nospaces = ["냉난방용(업무)", "업무난방용", "주한미군"]
+                    df_sub_filtered = df_csv_tab[(csv_products.isin(valid_biz_nospaces)) & (df_csv_tab["월_csv"] <= max_month)].copy()
+                    if "업종분류" in df_sub_filtered.columns:
+                        df_sub_filtered["업종"] = df_sub_filtered["업종분류"]
+                    grp_col = "업종"
+                    
+                if not df_sub_filtered.empty and grp_col in df_sub_filtered.columns:
+                    curr_ind_grp = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
+                    prev_ind_grp = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt - 1].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt-1}년"})
+                    
+                    ind_comp_graph = pd.merge(curr_ind_grp, prev_ind_grp, on=grp_col, how="outer").fillna(0)
+                    
+                    diff_c = ind_comp_graph[f"{sel_year_rpt}년"].sum() - sum_act
+                    diff_p = ind_comp_graph[f"{sel_year_rpt-1}년"].sum() - sum_prev
+                    
+                    ind_comp_graph = ind_comp_graph.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
+                    
+                    if len(ind_comp_graph) > 10:
+                        top10_df = ind_comp_graph.iloc[:10].copy()
+                        others_df = ind_comp_graph.iloc[10:].copy()
+                        o_c = others_df[f"{sel_year_rpt}년"].sum() - diff_c
+                        o_p = others_df[f"{sel_year_rpt-1}년"].sum() - diff_p
+                        
+                        others_row = pd.DataFrame([{grp_col: "기타", f"{sel_year_rpt}년": o_c, f"{sel_year_rpt-1}년": o_p}])
+                        ind_comp_plot = pd.concat([top10_df, others_row], ignore_index=True)
+                    else:
+                        ind_comp_plot = ind_comp_graph.copy()
+                        if len(ind_comp_plot) > 0:
+                            ind_comp_plot.loc[len(ind_comp_plot)-1, f"{sel_year_rpt}년"] -= diff_c
+                            ind_comp_plot.loc[len(ind_comp_plot)-1, f"{sel_year_rpt-1}년"] -= diff_p
+                            
+                    ind_comp_plot["증감절대값"] = abs(ind_comp_plot[f"{sel_year_rpt}년"] - ind_comp_plot[f"{sel_year_rpt-1}년"])
+                    max_diff_idx = ind_comp_plot["증감절대값"].idxmax()
+                    
+                    colors_act = [COLOR_ACT] * len(ind_comp_plot)
+                    if pd.notna(max_diff_idx): colors_act[max_diff_idx] = "#d32f2f" 
+                        
+                    fig_ind = go.Figure()
+                    fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[f"{sel_year_rpt}년"], name=f'{sel_year_rpt}년', marker_color=colors_act, text=[f"{v:,.0f}" if v>0 else "" for v in ind_comp_plot[f"{sel_year_rpt}년"]], textposition='auto', textfont=dict(size=11)))
+                    fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[f"{sel_year_rpt-1}년"], name=f'{sel_year_rpt-1}년', marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in ind_comp_plot[f"{sel_year_rpt-1}년"]], textposition='auto', textfont=dict(size=11)))
+                    
+                    fig_ind.update_layout(barmode='group', xaxis_title="", yaxis_title=f"판매량({unit_str})", margin=dict(t=10, b=10, l=10, r=10), height=420, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                    st.plotly_chart(fig_ind, use_container_width=True)
+                else:
+                    st.info("해당 용도의 세부 업종 데이터가 없습니다.")
+
+            # --- 4. 코멘트 작성란 ---
+            render_comment_section(f"📝 {usage_name} 세부 코멘트 작성", db_key, curr_db, comments_db, 100, f"{usage_name}의 월별 편차 원인 및 특이사항을 기록하세요.", f"{usage_name}_{key_sfx}")
+            st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
+
+            # =========================================================
+            # 하단 별첨 데이터 끌어올리기 (비교표, Top 30, 개별 고객)
+            # =========================================================
+            if not df_csv_tab.empty and val_col in df_csv_tab.columns and 'df_sub_filtered' in locals() and not df_sub_filtered.empty:
+                
+                st.markdown(f"**■ 🏢 {usage_name} 세부 업종별 비교표**")
+                
+                ind_comp = pd.merge(curr_ind_grp, prev_ind_grp, on=grp_col, how="outer").fillna(0)
+                ind_comp = ind_comp.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                 
                 if len(ind_comp) > 10:
                     top10_df = ind_comp.iloc[:10].copy()
@@ -525,7 +534,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     o_diff = o_c - o_p
                     o_rate = (o_c / o_p * 100) if o_p > 0 else 0
                     
-                    others_row = pd.DataFrame([{"업종": "기타", f"{sel_year_rpt}년": o_c, f"{sel_year_rpt-1}년": o_p, "증감": o_diff, "대비(%)": o_rate}])
+                    others_row = pd.DataFrame([{grp_col: "기타", f"{sel_year_rpt}년": o_c, f"{sel_year_rpt-1}년": o_p, "증감": o_diff, "대비(%)": o_rate}])
                     ind_comp = pd.concat([top10_df, others_row], ignore_index=True)
                 else:
                     if len(ind_comp) > 0:
@@ -540,137 +549,128 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 sum_diff = sum_curr - sum_prev
                 sum_rate = (sum_curr / sum_prev * 100) if sum_prev > 0 else 0
                 
-                sub_ind_row = pd.DataFrame([{"업종": "💡 총계", f"{sel_year_rpt}년": sum_curr, f"{sel_year_rpt-1}년": sum_prev, "증감": sum_diff, "대비(%)": sum_rate}])
+                sub_ind_row = pd.DataFrame([{grp_col: "💡 총계", f"{sel_year_rpt}년": sum_curr, f"{sel_year_rpt-1}년": sum_prev, "증감": sum_diff, "대비(%)": sum_rate}])
                 ind_comp = pd.concat([ind_comp, sub_ind_row], ignore_index=True)
                 
                 st.dataframe(center_style(ind_comp.style.format({f"{sel_year_rpt}년": "{:,.0f}", f"{sel_year_rpt-1}년": "{:,.0f}", "증감": "{:,.0f}", "대비(%)": "{:,.1f}"}).apply(highlight_subtotal, axis=1)), use_container_width=True, hide_index=True)
-            else:
-                st.error("데이터에 '업종' 컬럼이 없습니다.")
-                
-            st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
-                
-            st.markdown(f"**■ 🏆 {usage_label} Top 30 업체 List (당해연도 판매량 기준)**")
-            
-            if "고객명" in df_sub_filtered.columns and "업종" in df_sub_filtered.columns:
-                c_curr_all = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt].groupby(["고객명", "업종"], as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
-                c_prev_all = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "업종"], as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt-1}년"})
-                
-                grp_top = pd.merge(c_curr_all, c_prev_all, on=["고객명", "업종"], how="outer").fillna(0)
-                diff_c_top = grp_top[f"{sel_year_rpt}년"].sum() - tgt_c
-                diff_p_top = grp_top[f"{sel_year_rpt-1}년"].sum() - tgt_p
-
-                grp_top = grp_top.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
-                
-                d_c = diff_c_top
-                if d_c > 0:
-                    for idx in reversed(grp_top.index):
-                        if grp_top.loc[idx, f"{sel_year_rpt}년"] >= d_c:
-                            grp_top.loc[idx, f"{sel_year_rpt}년"] -= d_c
-                            d_c = 0
-                            break
-                        else:
-                            d_c -= grp_top.loc[idx, f"{sel_year_rpt}년"]
-                            grp_top.loc[idx, f"{sel_year_rpt}년"] = 0
-                elif d_c < 0:
-                    if len(grp_top) > 0: grp_top.loc[len(grp_top)-1, f"{sel_year_rpt}년"] -= d_c
-                        
-                d_p = diff_p_top
-                if d_p > 0:
-                    for idx in reversed(grp_top.index):
-                        if grp_top.loc[idx, f"{sel_year_rpt-1}년"] >= d_p:
-                            grp_top.loc[idx, f"{sel_year_rpt-1}년"] -= d_p
-                            d_p = 0
-                            break
-                        else:
-                            d_p -= grp_top.loc[idx, f"{sel_year_rpt-1}년"]
-                            grp_top.loc[idx, f"{sel_year_rpt-1}년"] = 0
-                elif d_p < 0:
-                    if len(grp_top) > 0: grp_top.loc[len(grp_top)-1, f"{sel_year_rpt-1}년"] -= d_p
-                        
-                grp_top = grp_top[(grp_top[f"{sel_year_rpt}년"] > 0) | (grp_top[f"{sel_year_rpt-1}년"] > 0)].reset_index(drop=True)
-
-                grp_top_30 = grp_top.head(30).copy()
-                grp_top_30["증감"] = grp_top_30[f"{sel_year_rpt}년"] - grp_top_30[f"{sel_year_rpt-1}년"]
-                grp_top_30["대비(%)"] = np.where(grp_top_30[f"{sel_year_rpt-1}년"] > 0, (grp_top_30[f"{sel_year_rpt}년"] / grp_top_30[f"{sel_year_rpt-1}년"]) * 100, 0)
-                
-                top30_sum_curr = grp_top_30[f"{sel_year_rpt}년"].sum()
-                top30_sum_prev = grp_top_30[f"{sel_year_rpt-1}년"].sum()
-                top30_diff = top30_sum_curr - top30_sum_prev
-                top30_rate = (top30_sum_curr / top30_sum_prev * 100) if top30_sum_prev > 0 else 0
-                top30_ratio = (top30_sum_curr / tgt_c * 100) if tgt_c > 0 else 0
-                
-                subtotal_row = pd.DataFrame([{"고객명": "💡 소계 (Top 30)", "업종": f"전체대비 {top30_ratio:.1f}%", f"{sel_year_rpt}년": top30_sum_curr, f"{sel_year_rpt-1}년": top30_sum_prev, "증감": top30_diff, "대비(%)": top30_rate}])
-                grp_top_show = pd.concat([grp_top_30, subtotal_row], ignore_index=True)
-                
-                ranks = list(range(1, len(grp_top_30) + 1)) + ["-"]
-                grp_top_show.insert(0, "순위", ranks)
-                
-                st.dataframe(center_style(grp_top_show.style.format({f"{sel_year_rpt}년": "{:,.0f}", f"{sel_year_rpt-1}년": "{:,.0f}", "증감": "{:,.0f}", "대비(%)": "{:,.1f}"}).apply(highlight_subtotal, axis=1)), use_container_width=True, hide_index=True)
-                
                 st.markdown("<br>", unsafe_allow_html=True)
                 
-                st.markdown(f"**🔍 {usage_label} 개별 고객 상세 차트**")
-                top_customers = [c for c in grp_top["고객명"] if "💡" not in c]
-                sel_cust = st.selectbox(f"상세 분석할 고객명을 선택하세요 ({usage_label})", ["선택 안함"] + top_customers, key=f"sel_cust_{usage_label}{key_sfx}")
+                # --- Top 30 리스트 ---
+                st.markdown(f"**■ 🏆 {usage_name} Top 30 업체 List (당해연도 판매량 기준)**")
+                if "고객명" in df_sub_filtered.columns:
+                    c_curr_all = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt].groupby(["고객명", grp_col], as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
+                    c_prev_all = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt - 1].groupby(["고객명", grp_col], as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt-1}년"})
+                    
+                    grp_top = pd.merge(c_curr_all, c_prev_all, on=["고객명", grp_col], how="outer").fillna(0)
+                    
+                    tgt_c = sum_act
+                    tgt_p = sum_prev
+                    
+                    diff_c_top = grp_top[f"{sel_year_rpt}년"].sum() - tgt_c
+                    diff_p_top = grp_top[f"{sel_year_rpt-1}년"].sum() - tgt_p
 
-                if sel_cust != "선택 안함":
-                    c_data = df_sub[df_sub["고객명"] == sel_cust]
-                    c_grp = c_data.groupby(["연_csv", "월_csv"], as_index=False)[val_col].sum()
+                    grp_top = grp_top.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                     
-                    y_cur = c_grp[(c_grp["연_csv"] == sel_year_rpt) & (c_grp["월_csv"] <= max_month)]
-                    y_prev = c_grp[(c_grp["연_csv"] == sel_year_rpt - 1) & (c_grp["월_csv"] <= max_month)]
-                    
-                    sum_cur_c = y_cur[val_col].sum()
-                    sum_prev_c = y_prev[val_col].sum()
-                    diff_val = sum_cur_c - sum_prev_c
-                    rate_val = (sum_cur_c / sum_prev_c * 100) if sum_prev_c > 0 else 0
-                    sign_str = "+" if diff_val > 0 else ""
-                    yoy_text = f"전년대비 증감: {sign_str}{diff_val:,.0f} ({rate_val:.1f}%)"
-                    
-                    cc1, cc2 = st.columns([1, 2])
-                    with cc1:
-                        fig_cust_cum = go.Figure()
-                        fig_cust_cum.add_trace(go.Bar(x=[f"{sel_year_rpt}년", f"{sel_year_rpt-1}년"], y=[sum_cur_c, sum_prev_c], marker_color=[COLOR_ACT, COLOR_PREV], text=[f"{sum_cur_c:,.0f}", f"{sum_prev_c:,.0f}"], textposition='auto'))
-                        fig_cust_cum.add_annotation(x=0.5, y=1.05, xref="paper", yref="paper", text=f"<b>{yoy_text}</b>", showarrow=False, font=dict(size=13, color="#d32f2f" if diff_val < 0 else "#1f77b4"), bgcolor="#f8f9fa", bordercolor="#d0d7e5", borderwidth=1, borderpad=4)
-                        fig_cust_cum.update_layout(title=f"'{sel_cust}' 누적 사용량 ({max_month}월 누적)", margin=dict(t=50,b=10,l=10,r=10), height=350)
-                        st.plotly_chart(fig_cust_cum, use_container_width=True)
-                        
-                    with cc2:
-                        fig_cust_mon = go.Figure()
-                        months_c = list(range(1, max_month + 1))
-                        cur_vals = [y_cur[y_cur['월_csv']==m][val_col].sum() for m in months_c]
-                        prev_vals = [y_prev[y_prev['월_csv']==m][val_col].sum() for m in months_c]
-                        
-                        fig_cust_mon.add_trace(go.Bar(x=months_c, y=cur_vals, name=f"{sel_year_rpt}년", marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in cur_vals], textposition='auto', textfont=dict(size=11)))
-                        fig_cust_mon.add_trace(go.Bar(x=months_c, y=prev_vals, name=f"{sel_year_rpt-1}년", marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in prev_vals], textposition='auto', textfont=dict(size=11)))
-                        
-                        fig_cust_mon.update_layout(title=f"'{sel_cust}' 월별 사용량 추이", barmode='group', xaxis=dict(tickmode='linear', tick0=1, dtick=1), margin=dict(t=50,b=10,l=10,r=10), height=350, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                        st.plotly_chart(fig_cust_mon, use_container_width=True)
-            else:
-                st.error("데이터에 '고객명' 또는 '업종' 컬럼이 없습니다.")
-                
-            st.markdown("<br><br>", unsafe_allow_html=True)
+                    d_c = diff_c_top
+                    if d_c > 0:
+                        for idx in reversed(grp_top.index):
+                            if grp_top.loc[idx, f"{sel_year_rpt}년"] >= d_c:
+                                grp_top.loc[idx, f"{sel_year_rpt}년"] -= d_c
+                                d_c = 0
+                                break
+                            else:
+                                d_c -= grp_top.loc[idx, f"{sel_year_rpt}년"]
+                                grp_top.loc[idx, f"{sel_year_rpt}년"] = 0
+                    elif d_c < 0:
+                        if len(grp_top) > 0: grp_top.loc[len(grp_top)-1, f"{sel_year_rpt}년"] -= d_c
+                            
+                    d_p = diff_p_top
+                    if d_p > 0:
+                        for idx in reversed(grp_top.index):
+                            if grp_top.loc[idx, f"{sel_year_rpt-1}년"] >= d_p:
+                                grp_top.loc[idx, f"{sel_year_rpt-1}년"] -= d_p
+                                d_p = 0
+                                break
+                            else:
+                                d_p -= grp_top.loc[idx, f"{sel_year_rpt-1}년"]
+                                grp_top.loc[idx, f"{sel_year_rpt-1}년"] = 0
+                    elif d_p < 0:
+                        if len(grp_top) > 0: grp_top.loc[len(grp_top)-1, f"{sel_year_rpt-1}년"] -= d_p
+                            
+                    grp_top = grp_top[(grp_top[f"{sel_year_rpt}년"] > 0) | (grp_top[f"{sel_year_rpt-1}년"] > 0)].reset_index(drop=True)
 
+                    grp_top_30 = grp_top.head(30).copy()
+                    grp_top_30["증감"] = grp_top_30[f"{sel_year_rpt}년"] - grp_top_30[f"{sel_year_rpt-1}년"]
+                    grp_top_30["대비(%)"] = np.where(grp_top_30[f"{sel_year_rpt-1}년"] > 0, (grp_top_30[f"{sel_year_rpt}년"] / grp_top_30[f"{sel_year_rpt-1}년"]) * 100, 0)
+                    
+                    top30_sum_curr = grp_top_30[f"{sel_year_rpt}년"].sum()
+                    top30_sum_prev = grp_top_30[f"{sel_year_rpt-1}년"].sum()
+                    top30_diff = top30_sum_curr - top30_sum_prev
+                    top30_rate = (top30_sum_curr / top30_sum_prev * 100) if top30_sum_prev > 0 else 0
+                    top30_ratio = (top30_sum_curr / tgt_c * 100) if tgt_c > 0 else 0
+                    
+                    subtotal_row = pd.DataFrame([{"고객명": "💡 소계 (Top 30)", grp_col: f"전체대비 {top30_ratio:.1f}%", f"{sel_year_rpt}년": top30_sum_curr, f"{sel_year_rpt-1}년": top30_sum_prev, "증감": top30_diff, "대비(%)": top30_rate}])
+                    grp_top_show = pd.concat([grp_top_30, subtotal_row], ignore_index=True)
+                    
+                    ranks = list(range(1, len(grp_top_30) + 1)) + ["-"]
+                    grp_top_show.insert(0, "순위", ranks)
+                    
+                    st.dataframe(center_style(grp_top_show.style.format({f"{sel_year_rpt}년": "{:,.0f}", f"{sel_year_rpt-1}년": "{:,.0f}", "증감": "{:,.0f}", "대비(%)": "{:,.1f}"}).apply(highlight_subtotal, axis=1)), use_container_width=True, hide_index=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    
+                    # --- 개별 고객 상세 차트 ---
+                    st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트**")
+                    top_customers = [c for c in grp_top["고객명"] if "💡" not in c]
+                    sel_cust = st.selectbox(f"상세 분석할 고객명을 선택하세요 ({usage_name})", ["선택 안함"] + top_customers, key=f"sel_cust_{usage_name}{key_sfx}")
+
+                    if sel_cust != "선택 안함":
+                        c_data = df_sub_filtered[df_sub_filtered["고객명"] == sel_cust]
+                        c_grp = c_data.groupby(["연_csv", "월_csv"], as_index=False)[val_col].sum()
+                        
+                        y_cur = c_grp[(c_grp["연_csv"] == sel_year_rpt) & (c_grp["월_csv"] <= max_month)]
+                        y_prev = c_grp[(c_grp["연_csv"] == sel_year_rpt - 1) & (c_grp["월_csv"] <= max_month)]
+                        
+                        sum_cur_c = y_cur[val_col].sum()
+                        sum_prev_c = y_prev[val_col].sum()
+                        diff_val = sum_cur_c - sum_prev_c
+                        rate_val = (sum_cur_c / sum_prev_c * 100) if sum_prev_c > 0 else 0
+                        sign_str = "+" if diff_val > 0 else ""
+                        yoy_text = f"전년대비 증감: {sign_str}{diff_val:,.0f} ({rate_val:.1f}%)"
+                        
+                        cc1, cc2 = st.columns([1, 2])
+                        with cc1:
+                            fig_cust_cum = go.Figure()
+                            fig_cust_cum.add_trace(go.Bar(x=[f"{sel_year_rpt}년", f"{sel_year_rpt-1}년"], y=[sum_cur_c, sum_prev_c], marker_color=[COLOR_ACT, COLOR_PREV], text=[f"{sum_cur_c:,.0f}", f"{sum_prev_c:,.0f}"], textposition='auto'))
+                            fig_cust_cum.add_annotation(x=0.5, y=1.05, xref="paper", yref="paper", text=f"<b>{yoy_text}</b>", showarrow=False, font=dict(size=13, color="#d32f2f" if diff_val < 0 else "#1f77b4"), bgcolor="#f8f9fa", bordercolor="#d0d7e5", borderwidth=1, borderpad=4)
+                            fig_cust_cum.update_layout(title=f"'{sel_cust}' 누적 사용량 ({max_month}월 누적)", margin=dict(t=50,b=10,l=10,r=10), height=350)
+                            st.plotly_chart(fig_cust_cum, use_container_width=True)
+                            
+                        with cc2:
+                            fig_cust_mon = go.Figure()
+                            months_c = list(range(1, max_month + 1))
+                            cur_vals = [y_cur[y_cur['월_csv']==m][val_col].sum() for m in months_c]
+                            prev_vals = [y_prev[y_prev['월_csv']==m][val_col].sum() for m in months_c]
+                            
+                            fig_cust_mon.add_trace(go.Bar(x=months_c, y=cur_vals, name=f"{sel_year_rpt}년", marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in cur_vals], textposition='auto', textfont=dict(size=11)))
+                            fig_cust_mon.add_trace(go.Bar(x=months_c, y=prev_vals, name=f"{sel_year_rpt-1}년", marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in prev_vals], textposition='auto', textfont=dict(size=11)))
+                            
+                            fig_cust_mon.update_layout(title=f"'{sel_cust}' 월별 사용량 추이", barmode='group', xaxis=dict(tickmode='linear', tick0=1, dtick=1), margin=dict(t=50,b=10,l=10,r=10), height=350, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                            st.plotly_chart(fig_cust_mon, use_container_width=True)
 
         # ─────────────────────────────────────────────────────────
-        # 순서대로 호출 
+        # 함수 실행 (업무용, 산업용)
         # ─────────────────────────────────────────────────────────
-        render_usage_trend_report("업무용", "1", key_sfx, "biz")
-        render_attachment_report("업무용", "1.2", key_sfx)
-
-        st.markdown("<hr style='margin: 30px 0;'>", unsafe_allow_html=True)
-
-        render_usage_trend_report("산업용", "2", key_sfx, "ind")
-        render_attachment_report("산업용", "2.2", key_sfx)
+        render_full_usage_report("업무용", "1", key_sfx, "biz")
+        st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
+        render_full_usage_report("산업용", "2", key_sfx, "ind")
         
         # ─────────────────────────────────────────────────────────
         # 3. 이상 감지 업체 지도 모니터링
         # ─────────────────────────────────────────────────────────
-        st.markdown("<hr style='border-top: 2px solid #1e3a8a; margin: 40px 0 20px 0;'>", unsafe_allow_html=True)
+        st.markdown("<hr style='border-top: 2px solid #1e3a8a; margin: 50px 0 20px 0;'>", unsafe_allow_html=True)
         st.markdown("### 🗺️ 3. 대용량 수요처 이상 감지 모니터링 지도")
         st.caption("※ YoY 기준 10% 이상 사용량이 하락한 업체를 지도에 붉은색 마커로 표시하여 현장 방문을 유도합니다.")
         
-        # 🟢 지도 렌더링 전 완벽한 조건 검사
         if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns:
             df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month]
             
