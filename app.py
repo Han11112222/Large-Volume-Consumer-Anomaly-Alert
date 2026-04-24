@@ -4,7 +4,7 @@ import os
 import re
 import random
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -34,10 +34,10 @@ set_korean_font()
 st.set_page_config(page_title="대용량 수요처 이상 감지 대시보드", layout="wide")
 
 DEFAULT_SALES_XLSX = "판매량(계획_실적).xlsx"
-DEFAULT_CSV = "가정용외_202601.csv"
+DEFAULT_CSV = "가정용외_202603.csv"
 
 # ─────────────────────────────────────────────────────────
-# 코멘트 DB 저장
+# 코멘트 DB 저장 (비밀번호 없음)
 # ─────────────────────────────────────────────────────────
 COMMENT_DB_FILE = "report_comments_db.json"
 REPO_NAME = "Han11112222/quarterly-sales-report"
@@ -121,8 +121,7 @@ USE_COL_TO_GROUP: Dict[str, str] = {
 
 COLOR_ACT = "rgba(0, 150, 255, 1)"
 COLOR_PREV = "rgba(190, 190, 190, 1)"
-COLOR_ALARM = "[211, 47, 47, 200]" # Red for map
-COLOR_WARN = "[255, 160, 0, 200]"  # Yellow for map
+COLOR_ALARM = [211, 47, 47, 200]  # Red for Map Markers
 
 def clean_korean_finance_number(val):
     if pd.isna(val): return 0.0
@@ -213,7 +212,7 @@ def build_long_dict(sheets: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
 # 📍 주소를 위경도로 변환하는 캐싱 함수 (카카오 API)
 @st.cache_data(show_spinner=False)
 def geocode_address(address: str, api_key: str = "") -> Tuple[float, float]:
-    if pd.isna(address) or not address:
+    if pd.isna(address) or not str(address).strip():
         return None, None
     if api_key:
         url = f"https://dapi.kakao.com/v2/local/search/address.json?query={address}"
@@ -224,7 +223,7 @@ def geocode_address(address: str, api_key: str = "") -> Tuple[float, float]:
                 return float(res['documents'][0]['y']), float(res['documents'][0]['x'])
         except Exception:
             pass
-    # API 키가 없거나 변환 실패 시 대구 지역(위도 35.8, 경도 128.5 주변) 임의 좌표 생성 (테스트용)
+    # API 키가 없거나 변환 실패 시 대구 지역(위도 35.8, 경도 128.6 주변) 임의 좌표 생성 (테스트용)
     lat = 35.8714 + random.uniform(-0.06, 0.06)
     lon = 128.6014 + random.uniform(-0.06, 0.06)
     return lat, lon
@@ -332,14 +331,19 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 default_y_index = years_available.index(max_year) if max_year in years_available else len(years_available) - 1
                 default_m_index = int(max_month - 1)
                 
+        # 🟢 완벽한 에러 방지(Fail-safe)를 위한 CSV 데이터 복사 및 파싱
         df_csv_tab = df_csv.copy()
         if not df_csv_tab.empty:
+            # 강제로 기본 컬럼을 먼저 생성하여 KeyError 원천 차단
+            df_csv_tab["연_csv"] = 2026
+            df_csv_tab["월_csv"] = 3
+            
             if unit_str == "GJ" and "사용량(mj)" in df_csv_tab.columns:
-                df_csv_tab["사용량(mj)"] = df_csv_tab["사용량(mj)"] / 1000.0
+                df_csv_tab["사용량(mj)"] = pd.to_numeric(df_csv_tab["사용량(mj)"], errors="coerce").fillna(0) / 1000.0
             elif unit_str == "천m³" and "사용량(m3)" in df_csv_tab.columns:
-                df_csv_tab["사용량(m3)"] = df_csv_tab["사용량(m3)"] / 1000.0
+                df_csv_tab["사용량(m3)"] = pd.to_numeric(df_csv_tab["사용량(m3)"], errors="coerce").fillna(0) / 1000.0
                 
-            df_csv_tab["날짜_파싱"] = pd.NaT
+            df_csv_tab["날짜_파싱"] = pd.to_datetime("2026-03-01")
             date_col = None
             for c in ["청구년월", "매출년월", "년월", "기준년월"]:
                 if c in df_csv_tab.columns:
@@ -347,12 +351,18 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     break
                     
             if date_col:
-                mask1 = df_csv_tab["날짜_파싱"].isna()
-                df_csv_tab.loc[mask1, "날짜_파싱"] = pd.to_datetime(df_csv_tab.loc[mask1, date_col], format="%b-%y", errors="coerce")
-                mask2 = df_csv_tab["날짜_파싱"].isna()
-                if mask2.any(): df_csv_tab.loc[mask2, "날짜_파싱"] = pd.to_datetime(df_csv_tab.loc[mask2, date_col], format="%Y%m", errors="coerce")
-                mask3 = df_csv_tab["날짜_파싱"].isna()
-                if mask3.any(): df_csv_tab.loc[mask3, "날짜_파싱"] = pd.to_datetime(df_csv_tab.loc[mask3, date_col], errors="coerce")
+                try:
+                    parsed = pd.to_datetime(df_csv_tab[date_col], format="%b-%y", errors="coerce")
+                    mask = parsed.isna()
+                    if mask.any():
+                        parsed.loc[mask] = pd.to_datetime(df_csv_tab.loc[mask, date_col], format="%Y%m", errors="coerce")
+                    mask = parsed.isna()
+                    if mask.any():
+                        parsed.loc[mask] = pd.to_datetime(df_csv_tab.loc[mask, date_col], errors="coerce")
+                    
+                    df_csv_tab["날짜_파싱"] = parsed.fillna(pd.to_datetime("2026-03-01"))
+                except Exception:
+                    pass
 
             df_csv_tab["연_csv"] = df_csv_tab["날짜_파싱"].dt.year
             df_csv_tab["월_csv"] = df_csv_tab["날짜_파싱"].dt.month
@@ -447,7 +457,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 st.warning(f"⚠️ 업종별 상세 데이터를 보려면 '{unit_str}' 단위에 맞는 데이터({val_col} 컬럼 포함)를 CSV로 업로드해주세요.")
                 return
 
-            # 안전망 1: 상품명 에러 방지
             if "상품명" in df_csv_tab.columns:
                 csv_products_att = df_csv_tab["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
             else:
@@ -523,7 +532,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 
             st.markdown(f"**■ 🏆 {usage_label} Top 30 업체 List (당해연도 판매량 기준)**")
             
-            # 안전망 2: 고객명 에러 방지
             if "고객명" in df_sub_filtered.columns and "업종" in df_sub_filtered.columns:
                 c_curr_all = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt].groupby(["고객명", "업종"], as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
                 c_prev_all = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "업종"], as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt-1}년"})
@@ -534,7 +542,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
 
                 grp_top = grp_top.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                 
-                # 보정 로직
                 d_c = diff_c_top
                 if d_c > 0:
                     for idx in reversed(grp_top.index):
@@ -642,11 +649,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         # ─────────────────────────────────────────────────────────
         st.markdown("<hr style='border-top: 2px solid #1e3a8a; margin: 40px 0 20px 0;'>", unsafe_allow_html=True)
         st.markdown("### 🗺️ 3. 대용량 수요처 이상 감지 모니터링 지도")
-        st.caption("※ YoY 기준 10% 이상 사용량이 하락한 업체를 지도에 붉은색으로 표시하여 집중 모니터링/현장 방문을 유도합니다.")
+        st.caption("※ YoY 기준 10% 이상 사용량이 하락한 업체를 지도에 붉은색 마커로 표시하여 현장 방문을 유도합니다.")
         
-        # 도로명주소가 있는지 확인 (안전망)
         if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns:
-            # 산업용 및 업무용 전체 대상 고객별 묶기
             df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month]
             
             map_curr = df_map_base[df_map_base["연_csv"] == sel_year_rpt].groupby(["고객명", "도로명주소"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
@@ -654,7 +659,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             
             df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소"], how="inner").fillna(0)
             
-            # 리스크 기준: 전년도 사용량이 0보다 크고, 당해년도 증감률이 -10% 이하인 곳
+            # 리스크 기준: 전년도 사용량이 존재하며 YoY -10% 이하인 업체
             df_map_merged["증감률(%)"] = np.where(df_map_merged["전년도"] > 0, ((df_map_merged["당해년도"] - df_map_merged["전년도"]) / df_map_merged["전년도"]) * 100, 0)
             alarm_df = df_map_merged[df_map_merged["증감률(%)"] <= -10].copy()
             
@@ -663,7 +668,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             else:
                 st.warning(f"🚨 총 **{len(alarm_df)}**개의 업체에서 10% 이상 하락 신호가 감지되었습니다.")
                 
-                # 상위 30개만 잘라서 지도 로딩 시간 방지
                 alarm_df = alarm_df.sort_values(by="증감률(%)").head(30).reset_index(drop=True)
                 
                 lats, lons, tooltips = [], [], []
@@ -671,10 +675,10 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     lat, lon = geocode_address(row['도로명주소'], kakao_key)
                     lats.append(lat)
                     lons.append(lon)
-                    # 툴팁 텍스트 구성
+                    
                     info = f"<b>{row['고객명']}</b><br/>"
                     info += f"전년: {row['전년도']:,.0f} / 당해: {row['당해년도']:,.0f}<br/>"
-                    info += f"증감률: <span style='color:red;'>{row['증감률(%)']:.1f}%</span><br/>"
+                    info += f"증감률: <span style='color:red; font-weight:bold;'>{row['증감률(%)']:.1f}%</span><br/>"
                     info += f"<span style='font-size:0.8em; color:gray;'>{row['도로명주소']}</span>"
                     tooltips.append(info)
                     
@@ -684,19 +688,17 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 alarm_df = alarm_df.dropna(subset=['lat', 'lon'])
                 
                 if not alarm_df.empty:
-                    # Pydeck 지도 시각화
                     layer = pdk.Layer(
                         "ScatterplotLayer",
                         data=alarm_df,
                         get_position='[lon, lat]',
                         get_color=COLOR_ALARM,
-                        get_radius=300,
+                        get_radius=200,
                         pickable=True,
                         opacity=0.8,
                         filled=True,
                     )
                     
-                    # 중심 좌표 설정 (데이터의 평균값)
                     view_state = pdk.ViewState(
                         latitude=alarm_df['lat'].mean(),
                         longitude=alarm_df['lon'].mean(),
