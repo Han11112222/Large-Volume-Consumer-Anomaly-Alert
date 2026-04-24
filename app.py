@@ -2,14 +2,16 @@ import io
 import json
 import os
 import re
+import random
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
 import matplotlib as mpl
-import plotly.express as px
 import plotly.graph_objects as go
+import pydeck as pdk
+import requests
 import streamlit as st
 from github import Github
 
@@ -29,13 +31,13 @@ def set_korean_font():
 
 
 set_korean_font()
-st.set_page_config(page_title="도시가스 판매량 분석 보고서 (YoY)", layout="wide")
+st.set_page_config(page_title="대용량 수요처 이상 감지 대시보드", layout="wide")
 
 DEFAULT_SALES_XLSX = "판매량(계획_실적).xlsx"
 DEFAULT_CSV = "가정용외_202601.csv"
 
 # ─────────────────────────────────────────────────────────
-# 🟢 코멘트 DB 저장 (PW 1234 제거 버전)
+# 코멘트 DB 저장
 # ─────────────────────────────────────────────────────────
 COMMENT_DB_FILE = "report_comments_db.json"
 REPO_NAME = "Han11112222/quarterly-sales-report"
@@ -68,7 +70,6 @@ def save_comments_db(db_data):
         pass
 
 def render_comment_section(title, db_key, curr_db, comments_db, height, placeholder, widget_key):
-    """비밀번호 없이 코멘트 수정/삭제가 가능하도록 변경된 UI"""
     st.markdown(f"**{title}**")
     saved_text = curr_db.get(db_key, None)
     
@@ -118,9 +119,10 @@ USE_COL_TO_GROUP: Dict[str, str] = {
     "연료전지용": "연료전지", "열전용설비용": "열전용설비용",
 }
 
-# 계획 색상은 제거하고 실적 색상만 유지
 COLOR_ACT = "rgba(0, 150, 255, 1)"
 COLOR_PREV = "rgba(190, 190, 190, 1)"
+COLOR_ALARM = "[211, 47, 47, 200]" # Red for map
+COLOR_WARN = "[255, 160, 0, 200]"  # Yellow for map
 
 def clean_korean_finance_number(val):
     if pd.isna(val): return 0.0
@@ -208,14 +210,33 @@ def build_long_dict(sheets: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
         long_dict["열량"] = make_long(sheets["계획_열량"], sheets["실적_열량"])
     return long_dict
 
+# 📍 주소를 위경도로 변환하는 캐싱 함수 (카카오 API)
+@st.cache_data(show_spinner=False)
+def geocode_address(address: str, api_key: str = "") -> Tuple[float, float]:
+    if pd.isna(address) or not address:
+        return None, None
+    if api_key:
+        url = f"https://dapi.kakao.com/v2/local/search/address.json?query={address}"
+        headers = {"Authorization": f"KakaoAK {api_key}"}
+        try:
+            res = requests.get(url, headers=headers).json()
+            if res.get('documents'):
+                return float(res['documents'][0]['y']), float(res['documents'][0]['x'])
+        except Exception:
+            pass
+    # API 키가 없거나 변환 실패 시 대구 지역(위도 35.8, 경도 128.5 주변) 임의 좌표 생성 (테스트용)
+    lat = 35.8714 + random.uniform(-0.06, 0.06)
+    lon = 128.6014 + random.uniform(-0.06, 0.06)
+    return lat, lon
+
 
 # ─────────────────────────────────────────────────────────
-# 사이드바 (모드 선택 제거)
+# 사이드바
 # ─────────────────────────────────────────────────────────
-st.title("📊 판매량 YoY 분석 보고서 (업무용/산업용 집중)")
+st.title("📊 대용량 수요처 이상 감지 대시보드")
 
 with st.sidebar:
-    st.header("📂 데이터 불러오기")
+    st.header("📂 데이터 및 설정")
 
     st.subheader("1. 판매량 데이터 (필수)")
     src_sales = st.radio("판매량 데이터 소스", ["레포 파일 사용", "엑셀 업로드(.xlsx)"], index=0, key="rpt_sales_src")
@@ -243,6 +264,10 @@ with st.sidebar:
             if df_list: st.session_state['merged_csv_df'] = pd.concat(df_list, ignore_index=True)
         else:
             if 'merged_csv_df' in st.session_state: del st.session_state['merged_csv_df']
+
+    st.markdown("---")
+    st.subheader("🗺️ 지도 API 키")
+    kakao_key = st.text_input("카카오 REST API 키", type="password", help="키가 없으면 대구 임의의 좌표로 위치가 매핑됩니다.")
 
 
 # ─────────────────────────────────────────────────────────
@@ -292,11 +317,11 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             val_col = "사용량(m3)"
             key_sfx = "_vol"
 
-        st.markdown(f"#### 📅 보고서 기준 일자 설정") 
+        st.markdown(f"#### 📅 기준 일자 설정") 
         
         years_available = [2024, 2025, 2026]
         default_y_index = len(years_available) - 1
-        default_q_index = 3 
+        default_m_index = 2 # 기본값 3월
         
         if not df_long_rpt.empty:
             years_available = sorted(df_long_rpt["연"].unique().tolist())
@@ -305,9 +330,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 max_year = actual_data["연"].max()
                 max_month = actual_data[actual_data["연"] == max_year]["월"].max()
                 default_y_index = years_available.index(max_year) if max_year in years_available else len(years_available) - 1
-                default_q_index = int((max_month - 1) // 3) 
-                if default_q_index < 0: default_q_index = 0
-                if default_q_index > 3: default_q_index = 3
+                default_m_index = int(max_month - 1)
                 
         df_csv_tab = df_csv.copy()
         if not df_csv_tab.empty:
@@ -334,14 +357,14 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             df_csv_tab["연_csv"] = df_csv_tab["날짜_파싱"].dt.year
             df_csv_tab["월_csv"] = df_csv_tab["날짜_파싱"].dt.month
         
-        c_y, c_q, c_empty = st.columns([1, 1, 2])
+        c_y, c_m, c_empty = st.columns([1, 1, 2])
         with c_y:
             sel_year_rpt = st.selectbox("기준 연도", years_available, index=default_y_index, key=f"rpt_yr{key_sfx}")
-        with c_q:
-            sel_quarter = st.selectbox("기준 분기", ["1Q (1~3월)", "2Q (1~6월 누적)", "3Q (1~9월 누적)", "4Q (1~12월 누적)"], index=default_q_index, key=f"rpt_qt{key_sfx}")
+        with c_m:
+            sel_month_str = st.selectbox("기준 월", [f"{m}월" for m in range(1, 13)], index=default_m_index, key=f"rpt_mo{key_sfx}")
         
-        max_month = int(sel_quarter[0]) * 3 
-        report_db_key = f"{sel_year_rpt}_{sel_quarter[:2]}_{unit_str}_yoy_only"
+        max_month = int(sel_month_str.replace("월", "")) 
+        report_db_key = f"{sel_year_rpt}_{max_month}M_{unit_str}_yoy_only"
         
         if report_db_key not in comments_db: comments_db[report_db_key] = {}
         curr_db = comments_db[report_db_key]
@@ -349,7 +372,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("<hr style='margin: 10px 0 30px 0;'>", unsafe_allow_html=True)
 
         # ─────────────────────────────────────────────────────────
-        # 1, 2. 용도별 판매량 분석 (업무용 / 산업용) - 계획 제거, 실적 위주
+        # 1, 2. 용도별 판매량 분석
         # ─────────────────────────────────────────────────────────
         def render_usage_trend_report(usage_name, section_num, key_sfx, db_key):
             if df_long_rpt.empty:
@@ -359,7 +382,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             else:
                 df_u = df_long_rpt[(df_long_rpt["그룹"] == usage_name) & (df_long_rpt["월"] <= max_month)]
                 
-                # 계획 실적 제거, 금년/전년 실적만 추출
                 p_curr_act = df_u[(df_u["연"] == sel_year_rpt) & (df_u["계획/실적"] == "실적")].groupby("월")["값"].sum()
                 p_prev_act = df_u[(df_u["연"] == sel_year_rpt-1) & (df_u["계획/실적"] == "실적")].groupby("월")["값"].sum()
                 
@@ -376,7 +398,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 col_c, col_m = st.columns([1, 2.5])
                 
                 with col_c:
-                    st.markdown(f"**■ 누적 실적 비교 ({sel_quarter[:2]})**")
+                    st.markdown(f"**■ 누적 실적 비교 ({max_month}월 누적)**")
                     st.markdown(
                         f"""
                         <div style="background-color: #e2e8f0; border-left: 5px solid #1e3a8a; padding: 10px 10px; margin-bottom: 0px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
@@ -416,7 +438,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
 
 
         # ─────────────────────────────────────────────────────────
-        # 1.2, 2.2 별첨 현황 (업무용/산업용) - 토글 없이 무조건 표시
+        # 1.2, 2.2 별첨 현황 
         # ─────────────────────────────────────────────────────────
         def render_attachment_report(usage_label, section_num, key_sfx):
             st.markdown(f"##### 📎 {section_num}. 별첨 ({usage_label})")
@@ -425,7 +447,12 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 st.warning(f"⚠️ 업종별 상세 데이터를 보려면 '{unit_str}' 단위에 맞는 데이터({val_col} 컬럼 포함)를 CSV로 업로드해주세요.")
                 return
 
-            csv_products_att = df_csv_tab["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
+            # 안전망 1: 상품명 에러 방지
+            if "상품명" in df_csv_tab.columns:
+                csv_products_att = df_csv_tab["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
+            else:
+                csv_products_att = pd.Series([""] * len(df_csv_tab))
+                st.warning("⚠️ 파일에 '상품명' 컬럼이 없어 분류가 일부 제한될 수 있습니다.")
             
             if usage_label == "산업용":
                 df_sub = df_csv_tab[csv_products_att == "산업용"].copy()
@@ -496,6 +523,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 
             st.markdown(f"**■ 🏆 {usage_label} Top 30 업체 List (당해연도 판매량 기준)**")
             
+            # 안전망 2: 고객명 에러 방지
             if "고객명" in df_sub_filtered.columns and "업종" in df_sub_filtered.columns:
                 c_curr_all = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt].groupby(["고객명", "업종"], as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
                 c_prev_all = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "업종"], as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt-1}년"})
@@ -506,6 +534,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
 
                 grp_top = grp_top.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                 
+                # 보정 로직
                 d_c = diff_c_top
                 if d_c > 0:
                     for idx in reversed(grp_top.index):
@@ -577,7 +606,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                         fig_cust_cum = go.Figure()
                         fig_cust_cum.add_trace(go.Bar(x=[f"{sel_year_rpt}년", f"{sel_year_rpt-1}년"], y=[sum_cur_c, sum_prev_c], marker_color=[COLOR_ACT, COLOR_PREV], text=[f"{sum_cur_c:,.0f}", f"{sum_prev_c:,.0f}"], textposition='auto'))
                         fig_cust_cum.add_annotation(x=0.5, y=1.05, xref="paper", yref="paper", text=f"<b>{yoy_text}</b>", showarrow=False, font=dict(size=13, color="#d32f2f" if diff_val < 0 else "#1f77b4"), bgcolor="#f8f9fa", bordercolor="#d0d7e5", borderwidth=1, borderpad=4)
-                        fig_cust_cum.update_layout(title=f"'{sel_cust}' 누적 사용량 ({sel_quarter[:2]})", margin=dict(t=50,b=10,l=10,r=10), height=350)
+                        fig_cust_cum.update_layout(title=f"'{sel_cust}' 누적 사용량 ({max_month}월 누적)", margin=dict(t=50,b=10,l=10,r=10), height=350)
                         st.plotly_chart(fig_cust_cum, use_container_width=True)
                         
                     with cc2:
@@ -598,7 +627,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
 
 
         # ─────────────────────────────────────────────────────────
-        # 순서대로 호출 (업무용 -> 업무용 별첨 -> 산업용 -> 산업용 별첨)
+        # 순서대로 호출 
         # ─────────────────────────────────────────────────────────
         render_usage_trend_report("업무용", "1", key_sfx, "biz")
         render_attachment_report("업무용", "1.2", key_sfx)
@@ -608,9 +637,89 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         render_usage_trend_report("산업용", "2", key_sfx, "ind")
         render_attachment_report("산업용", "2.2", key_sfx)
         
-        # --- 🖨️ 보고서 출력 (기존과 동일) ---
+        # ─────────────────────────────────────────────────────────
+        # 3. 이상 감지 업체 지도 모니터링 (새로운 기능)
+        # ─────────────────────────────────────────────────────────
+        st.markdown("<hr style='border-top: 2px solid #1e3a8a; margin: 40px 0 20px 0;'>", unsafe_allow_html=True)
+        st.markdown("### 🗺️ 3. 대용량 수요처 이상 감지 모니터링 지도")
+        st.caption("※ YoY 기준 10% 이상 사용량이 하락한 업체를 지도에 붉은색으로 표시하여 집중 모니터링/현장 방문을 유도합니다.")
+        
+        # 도로명주소가 있는지 확인 (안전망)
+        if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns:
+            # 산업용 및 업무용 전체 대상 고객별 묶기
+            df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month]
+            
+            map_curr = df_map_base[df_map_base["연_csv"] == sel_year_rpt].groupby(["고객명", "도로명주소"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
+            map_prev = df_map_base[df_map_base["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "도로명주소"], as_index=False)[val_col].sum().rename(columns={val_col: "전년도"})
+            
+            df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소"], how="inner").fillna(0)
+            
+            # 리스크 기준: 전년도 사용량이 0보다 크고, 당해년도 증감률이 -10% 이하인 곳
+            df_map_merged["증감률(%)"] = np.where(df_map_merged["전년도"] > 0, ((df_map_merged["당해년도"] - df_map_merged["전년도"]) / df_map_merged["전년도"]) * 100, 0)
+            alarm_df = df_map_merged[df_map_merged["증감률(%)"] <= -10].copy()
+            
+            if alarm_df.empty:
+                st.success("✅ 선택한 기간 내 YoY 10% 이상 하락한 리스크 업체가 없습니다.")
+            else:
+                st.warning(f"🚨 총 **{len(alarm_df)}**개의 업체에서 10% 이상 하락 신호가 감지되었습니다.")
+                
+                # 상위 30개만 잘라서 지도 로딩 시간 방지
+                alarm_df = alarm_df.sort_values(by="증감률(%)").head(30).reset_index(drop=True)
+                
+                lats, lons, tooltips = [], [], []
+                for _, row in alarm_df.iterrows():
+                    lat, lon = geocode_address(row['도로명주소'], kakao_key)
+                    lats.append(lat)
+                    lons.append(lon)
+                    # 툴팁 텍스트 구성
+                    info = f"<b>{row['고객명']}</b><br/>"
+                    info += f"전년: {row['전년도']:,.0f} / 당해: {row['당해년도']:,.0f}<br/>"
+                    info += f"증감률: <span style='color:red;'>{row['증감률(%)']:.1f}%</span><br/>"
+                    info += f"<span style='font-size:0.8em; color:gray;'>{row['도로명주소']}</span>"
+                    tooltips.append(info)
+                    
+                alarm_df['lat'] = lats
+                alarm_df['lon'] = lons
+                alarm_df['tooltip'] = tooltips
+                alarm_df = alarm_df.dropna(subset=['lat', 'lon'])
+                
+                if not alarm_df.empty:
+                    # Pydeck 지도 시각화
+                    layer = pdk.Layer(
+                        "ScatterplotLayer",
+                        data=alarm_df,
+                        get_position='[lon, lat]',
+                        get_color=COLOR_ALARM,
+                        get_radius=300,
+                        pickable=True,
+                        opacity=0.8,
+                        filled=True,
+                    )
+                    
+                    # 중심 좌표 설정 (데이터의 평균값)
+                    view_state = pdk.ViewState(
+                        latitude=alarm_df['lat'].mean(),
+                        longitude=alarm_df['lon'].mean(),
+                        zoom=11,
+                        pitch=40,
+                    )
+                    
+                    r = pdk.Deck(
+                        layers=[layer],
+                        initial_view_state=view_state,
+                        tooltip={"html": "{tooltip}", "style": {"backgroundColor": "white", "color": "black", "font-family": "NanumGothic"}}
+                    )
+                    st.pydeck_chart(r)
+                else:
+                    st.error("주소 좌표 변환에 실패하여 지도를 표시할 수 없습니다.")
+        else:
+            st.info("데이터에 '도로명주소' 또는 '고객명' 컬럼이 존재하지 않아 지도를 생성할 수 없습니다.")
+
+        # ─────────────────────────────────────────────────────────
+        # 4. 보고서 출력
+        # ─────────────────────────────────────────────────────────
         st.markdown("<hr style='border-top: 2px solid #bbb; margin: 40px 0 20px 0;'>", unsafe_allow_html=True)
-        st.markdown("### 🖨️ 3. 보고서 출력")
+        st.markdown("### 🖨️ 4. 보고서 출력")
         
         st.markdown("""
             <style>
