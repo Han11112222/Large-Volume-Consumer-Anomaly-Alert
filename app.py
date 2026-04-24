@@ -29,12 +29,10 @@ def set_korean_font():
         except Exception:
             pass
 
-
 set_korean_font()
 st.set_page_config(page_title="대용량 수요처 이상 감지 대시보드", layout="wide")
 
 DEFAULT_SALES_XLSX = "판매량(계획_실적).xlsx"
-DEFAULT_CSV = "가정용외_202603.csv"
 
 # ─────────────────────────────────────────────────────────
 # 코멘트 DB 저장 (비밀번호 없음)
@@ -54,7 +52,6 @@ def load_comments_db():
 def save_comments_db(db_data):
     with open(COMMENT_DB_FILE, "w", encoding="utf-8") as f:
         json.dump(db_data, f, ensure_ascii=False, indent=4)
-        
     try:
         if "GITHUB_TOKEN" in st.secrets:
             token = st.secrets["GITHUB_TOKEN"]
@@ -121,7 +118,7 @@ USE_COL_TO_GROUP: Dict[str, str] = {
 
 COLOR_ACT = "rgba(0, 150, 255, 1)"
 COLOR_PREV = "rgba(190, 190, 190, 1)"
-COLOR_ALARM = [211, 47, 47, 200]  # Red for Map Markers
+COLOR_ALARM = [211, 47, 47, 200]  # 지도 시각화용 붉은색
 
 def clean_korean_finance_number(val):
     if pd.isna(val): return 0.0
@@ -209,6 +206,18 @@ def build_long_dict(sheets: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
         long_dict["열량"] = make_long(sheets["계획_열량"], sheets["실적_열량"])
     return long_dict
 
+# 📍 안전한 CSV 로드 함수 (인코딩 및 공백 이슈 방지)
+def load_safe_csv(file_bytes) -> pd.DataFrame:
+    encodings = ["utf-8-sig", "cp949", "utf-8", "euc-kr"]
+    for enc in encodings:
+        try:
+            df = pd.read_csv(io.BytesIO(file_bytes), encoding=enc, thousands=',')
+            df.columns = df.columns.str.strip() # 헤더의 숨은 공백 제거
+            return df
+        except Exception:
+            pass
+    return pd.DataFrame()
+
 # 📍 주소를 위경도로 변환하는 캐싱 함수 (카카오 API)
 @st.cache_data(show_spinner=False)
 def geocode_address(address: str, api_key: str = "") -> Tuple[float, float]:
@@ -256,10 +265,9 @@ with st.sidebar:
         if up_csvs:
             df_list = []
             for f in up_csvs:
-                try: df_list.append(pd.read_csv(io.BytesIO(f.getvalue()), encoding="utf-8-sig", thousands=','))
-                except:
-                    try: df_list.append(pd.read_csv(io.BytesIO(f.getvalue()), encoding="cp949", thousands=','))
-                    except: pass
+                df = load_safe_csv(f.getvalue())
+                if not df.empty:
+                    df_list.append(df)
             if df_list: st.session_state['merged_csv_df'] = pd.concat(df_list, ignore_index=True)
         else:
             if 'merged_csv_df' in st.session_state: del st.session_state['merged_csv_df']
@@ -274,7 +282,7 @@ with st.sidebar:
 # ─────────────────────────────────────────────────────────
 
 long_dict_rpt: Dict[str, pd.DataFrame] = {}
-if 'excel_bytes' in locals() and excel_bytes is not None:
+if excel_bytes is not None:
     sheets_rpt = load_all_sheets(excel_bytes)
     long_dict_rpt = build_long_dict(sheets_rpt)
     
@@ -286,9 +294,15 @@ if src_csv == "레포 파일 사용":
     all_csvs = list(set(all_csvs)) 
     csv_list = []
     for p in all_csvs:
-        try: csv_list.append(pd.read_csv(p, encoding="utf-8-sig", thousands=','))
+        try:
+            temp_df = pd.read_csv(p, encoding="utf-8-sig", thousands=',')
+            temp_df.columns = temp_df.columns.str.strip()
+            csv_list.append(temp_df)
         except:
-            try: csv_list.append(pd.read_csv(p, encoding="cp949", thousands=','))
+            try: 
+                temp_df = pd.read_csv(p, encoding="cp949", thousands=',')
+                temp_df.columns = temp_df.columns.str.strip()
+                csv_list.append(temp_df)
             except: pass
     if csv_list: df_csv = pd.concat(csv_list, ignore_index=True)
 
@@ -301,15 +315,15 @@ if not df_csv.empty:
         
 comments_db = load_comments_db()
         
-rpt_tabs = st.tabs(["열량 기준 (GJ)", "부피 기준 (천m³)"])
+rpt_tabs = st.tabs(["열량 기준 (TJ)", "부피 기준 (천m³)"])
 
 for idx, rpt_tab in enumerate(rpt_tabs):
     with rpt_tab:
         if idx == 0:
             df_long_rpt = long_dict_rpt.get("열량", pd.DataFrame())
-            unit_str = "GJ"
+            unit_str = "TJ"
             val_col = "사용량(mj)"
-            key_sfx = "_gj"
+            key_sfx = "_tj"
         else:
             df_long_rpt = long_dict_rpt.get("부피", pd.DataFrame())
             unit_str = "천m³"
@@ -331,15 +345,15 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 default_y_index = years_available.index(max_year) if max_year in years_available else len(years_available) - 1
                 default_m_index = int(max_month - 1)
                 
-        # 🟢 완벽한 에러 방지(Fail-safe)를 위한 CSV 데이터 복사 및 파싱
+        # 🟢 완벽한 에러 방지(Fail-safe)
         df_csv_tab = df_csv.copy()
         if not df_csv_tab.empty:
-            # 강제로 기본 컬럼을 먼저 생성하여 KeyError 원천 차단
             df_csv_tab["연_csv"] = 2026
             df_csv_tab["월_csv"] = 3
             
-            if unit_str == "GJ" and "사용량(mj)" in df_csv_tab.columns:
-                df_csv_tab["사용량(mj)"] = pd.to_numeric(df_csv_tab["사용량(mj)"], errors="coerce").fillna(0) / 1000.0
+            # MJ 단위를 TJ 로 변환 (1,000,000으로 나눔)
+            if unit_str == "TJ" and "사용량(mj)" in df_csv_tab.columns:
+                df_csv_tab["사용량(mj)"] = pd.to_numeric(df_csv_tab["사용량(mj)"], errors="coerce").fillna(0) / 1000000.0
             elif unit_str == "천m³" and "사용량(m3)" in df_csv_tab.columns:
                 df_csv_tab["사용량(m3)"] = pd.to_numeric(df_csv_tab["사용량(m3)"], errors="coerce").fillna(0) / 1000.0
                 
@@ -387,7 +401,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         def render_usage_trend_report(usage_name, section_num, key_sfx, db_key):
             if df_long_rpt.empty:
                 st.markdown(f"#### 📈 {section_num}. 용도별 판매량 분석 : {usage_name}")
-                st.info("판매량 데이터가 없습니다.")
+                st.info("판매량 엑셀 데이터가 없습니다.")
                 return ""
             else:
                 df_u = df_long_rpt[(df_long_rpt["그룹"] == usage_name) & (df_long_rpt["월"] <= max_month)]
@@ -476,9 +490,14 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             
             df_sub_filtered = df_sub[df_sub["월_csv"] <= max_month]
             
-            df_u_target = df_long_rpt[(df_long_rpt["그룹"] == usage_label) & (df_long_rpt["월"] <= max_month)]
-            tgt_c = df_u_target[(df_u_target["연"] == sel_year_rpt) & (df_u_target["계획/실적"] == "실적")]["값"].sum()
-            tgt_p = df_u_target[(df_u_target["연"] == sel_year_rpt-1) & (df_u_target["계획/실적"] == "실적")]["값"].sum()
+            # 🟢 에러 원천 차단 로직: 엑셀 데이터가 없을 경우 tgt_c, tgt_p를 0으로 강제 세팅
+            if df_long_rpt.empty:
+                tgt_c = 0
+                tgt_p = 0
+            else:
+                df_u_target = df_long_rpt[(df_long_rpt["그룹"] == usage_label) & (df_long_rpt["월"] <= max_month)]
+                tgt_c = df_u_target[(df_u_target["연"] == sel_year_rpt) & (df_u_target["계획/실적"] == "실적")]["값"].sum()
+                tgt_p = df_u_target[(df_u_target["연"] == sel_year_rpt-1) & (df_u_target["계획/실적"] == "실적")]["값"].sum()
                 
             st.markdown(f"**■ 🏢 {usage_label} 세부 업종별 비교표**")
             if "업종" in df_sub_filtered.columns:
@@ -645,13 +664,14 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         render_attachment_report("산업용", "2.2", key_sfx)
         
         # ─────────────────────────────────────────────────────────
-        # 3. 이상 감지 업체 지도 모니터링 (새로운 기능)
+        # 3. 이상 감지 업체 지도 모니터링
         # ─────────────────────────────────────────────────────────
         st.markdown("<hr style='border-top: 2px solid #1e3a8a; margin: 40px 0 20px 0;'>", unsafe_allow_html=True)
         st.markdown("### 🗺️ 3. 대용량 수요처 이상 감지 모니터링 지도")
         st.caption("※ YoY 기준 10% 이상 사용량이 하락한 업체를 지도에 붉은색 마커로 표시하여 현장 방문을 유도합니다.")
         
-        if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns:
+        # 🟢 지도 렌더링 전 완벽한 조건 검사
+        if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns:
             df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month]
             
             map_curr = df_map_base[df_map_base["연_csv"] == sel_year_rpt].groupby(["고객명", "도로명주소"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
@@ -659,7 +679,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             
             df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소"], how="inner").fillna(0)
             
-            # 리스크 기준: 전년도 사용량이 존재하며 YoY -10% 이하인 업체
             df_map_merged["증감률(%)"] = np.where(df_map_merged["전년도"] > 0, ((df_map_merged["당해년도"] - df_map_merged["전년도"]) / df_map_merged["전년도"]) * 100, 0)
             alarm_df = df_map_merged[df_map_merged["증감률(%)"] <= -10].copy()
             
@@ -715,7 +734,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 else:
                     st.error("주소 좌표 변환에 실패하여 지도를 표시할 수 없습니다.")
         else:
-            st.info("데이터에 '도로명주소' 또는 '고객명' 컬럼이 존재하지 않아 지도를 생성할 수 없습니다.")
+            st.info("데이터에 '도로명주소' 컬럼이 없거나 데이터가 부족하여 지도를 생성할 수 없습니다.")
 
         # ─────────────────────────────────────────────────────────
         # 4. 보고서 출력
