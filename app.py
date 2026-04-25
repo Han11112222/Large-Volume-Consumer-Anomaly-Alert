@@ -464,75 +464,77 @@ try:
             st.markdown("### 🗺️ 3. 대용량 수요처 이상 감지 모니터링 지도")
             st.caption("※ YoY 기준 10% 이상 사용량이 하락한 업체를 지도에 붉은색 마커로 표시하여 현장 방문을 유도합니다.")
             
+            # 🟢 강력한 방어 로직 추가: df_csv_tab이 빈 값이면 지도 로직 실행 안 함
             if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns and "용도" in df_csv_tab.columns:
                 df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month].copy()
                 
-                prod_s = df_map_base.get("상품명", pd.Series([""] * len(df_map_base), index=df_map_base.index)).astype(str).str.replace(r"\s+", "", regex=True)
-                df_map_base["용도_태그"] = np.where(prod_s == "산업용", "[산업용]", 
-                                             np.where(prod_s.isin(["냉난방용(업무)", "업무난방용", "주한미군"]), "[업무용]", "[기타]"))
+                if not df_map_base.empty:
+                    prod_s = df_map_base.get("상품명", pd.Series([""] * len(df_map_base), index=df_map_base.index)).astype(str).str.replace(r"\s+", "", regex=True)
+                    df_map_base["용도_태그"] = np.where(prod_s == "산업용", "[산업용]", 
+                                                 np.where(prod_s.isin(["냉난방용(업무)", "업무난방용", "주한미군"]), "[업무용]", "[기타]"))
 
-                map_curr = df_map_base[df_map_base["연_csv"] == sel_year_rpt].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
-                map_prev = df_map_base[df_map_base["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "전년도"})
-                
-                if not map_curr.empty and not map_prev.empty:
-                    df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소", "용도_태그"], how="inner").fillna(0)
+                    map_curr = df_map_base[df_map_base["연_csv"] == sel_year_rpt].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
+                    map_prev = df_map_base[df_map_base["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "전년도"})
                     
-                    df_map_merged["증감률(%)"] = np.where(df_map_merged["전년도"] > 0, ((df_map_merged["당해년도"] - df_map_merged["전년도"]) / df_map_merged["전년도"]) * 100, 0)
-                    alarm_df = df_map_merged[df_map_merged["증감률(%)"] <= -10].copy()
-                    
-                    if alarm_df.empty:
-                        st.success("✅ 선택한 기간 내 YoY 10% 이상 하락한 리스크 업체가 없습니다.")
-                    else:
-                        st.warning(f"🚨 총 **{len(alarm_df)}**개의 업체에서 10% 이상 하락 신호가 감지되었습니다.")
+                    if not map_curr.empty and not map_prev.empty:
+                        df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소", "용도_태그"], how="inner").fillna(0)
                         
-                        alarm_df = alarm_df.sort_values(by="증감률(%)").head(30).reset_index(drop=True)
+                        df_map_merged["증감률(%)"] = np.where(df_map_merged["전년도"] > 0, ((df_map_merged["당해년도"] - df_map_merged["전년도"]) / df_map_merged["전년도"]) * 100, 0)
+                        alarm_df = df_map_merged[df_map_merged["증감률(%)"] <= -10].copy()
                         
-                        lats, lons, tooltips = [], [], []
-                        for _, row in alarm_df.iterrows():
-                            lat, lon = geocode_address(row['도로명주소'], kakao_key)
-                            lats.append(lat)
-                            lons.append(lon)
-                            
-                            info = f"<b>{row['용도_태그']} {row['고객명']}</b><br/>"
-                            info += f"전년: {row['전년도']:,.0f} / 당해: {row['당해년도']:,.0f}<br/>"
-                            info += f"증감률: <span style='color:red; font-weight:bold;'>{row['증감률(%)']:.1f}%</span><br/>"
-                            info += f"<span style='font-size:0.8em; color:gray;'>{row['도로명주소']}</span>"
-                            tooltips.append(info)
-                            
-                        alarm_df['lat'] = lats
-                        alarm_df['lon'] = lons
-                        alarm_df['tooltip'] = tooltips
-                        alarm_df = alarm_df.dropna(subset=['lat', 'lon'])
-                        
-                        if not alarm_df.empty:
-                            layer = pdk.Layer(
-                                "ScatterplotLayer",
-                                data=alarm_df,
-                                get_position='[lon, lat]',
-                                get_color=COLOR_ALARM,
-                                get_radius=200,
-                                pickable=True,
-                                opacity=0.8,
-                                filled=True,
-                            )
-                            
-                            view_state = pdk.ViewState(
-                                latitude=alarm_df['lat'].mean(),
-                                longitude=alarm_df['lon'].mean(),
-                                zoom=11,
-                                pitch=40,
-                            )
-                            
-                            r = pdk.Deck(
-                                layers=[layer],
-                                initial_view_state=view_state,
-                                tooltip={"html": "{tooltip}", "style": {"backgroundColor": "white", "color": "black", "font-family": "NanumGothic"}}
-                            )
-                            st.pydeck_chart(r)
+                        if alarm_df.empty:
+                            st.success("✅ 선택한 기간 내 YoY 10% 이상 하락한 리스크 업체가 없습니다.")
                         else:
-                            st.error("주소 좌표 변환에 실패하여 지도를 표시할 수 없습니다.")
-                else:
-                    st.info("비교할 과거 또는 당해 연도 데이터가 없습니다.")
+                            st.warning(f"🚨 총 **{len(alarm_df)}**개의 업체에서 10% 이상 하락 신호가 감지되었습니다.")
+                            
+                            alarm_df = alarm_df.sort_values(by="증감률(%)").head(30).reset_index(drop=True)
+                            
+                            lats, lons, tooltips = [], [], []
+                            for _, row in alarm_df.iterrows():
+                                lat, lon = geocode_address(row['도로명주소'], kakao_key)
+                                lats.append(lat)
+                                lons.append(lon)
+                                
+                                info = f"<b>{row['용도_태그']} {row['고객명']}</b><br/>"
+                                info += f"전년: {row['전년도']:,.0f} / 당해: {row['당해년도']:,.0f}<br/>"
+                                info += f"증감률: <span style='color:red; font-weight:bold;'>{row['증감률(%)']:.1f}%</span><br/>"
+                                info += f"<span style='font-size:0.8em; color:gray;'>{row['도로명주소']}</span>"
+                                tooltips.append(info)
+                                
+                            alarm_df['lat'] = lats
+                            alarm_df['lon'] = lons
+                            alarm_df['tooltip'] = tooltips
+                            alarm_df = alarm_df.dropna(subset=['lat', 'lon'])
+                            
+                            if not alarm_df.empty:
+                                layer = pdk.Layer(
+                                    "ScatterplotLayer",
+                                    data=alarm_df,
+                                    get_position='[lon, lat]',
+                                    get_color=COLOR_ALARM,
+                                    get_radius=200,
+                                    pickable=True,
+                                    opacity=0.8,
+                                    filled=True,
+                                )
+                                
+                                view_state = pdk.ViewState(
+                                    latitude=alarm_df['lat'].mean(),
+                                    longitude=alarm_df['lon'].mean(),
+                                    zoom=11,
+                                    pitch=40,
+                                )
+                                
+                                r = pdk.Deck(
+                                    layers=[layer],
+                                    initial_view_state=view_state,
+                                    tooltip={"html": "{tooltip}", "style": {"backgroundColor": "white", "color": "black", "font-family": "NanumGothic"}}
+                                )
+                                st.pydeck_chart(r)
+                            else:
+                                st.error("주소 좌표 변환에 실패하여 지도를 표시할 수 없습니다.")
+                    else:
+                        st.info("비교할 과거 또는 당해 연도 데이터가 없습니다.")
             else:
                 st.info("데이터에 '도로명주소', '고객명', '용도' 컬럼이 없거나 데이터가 부족하여 지도를 생성할 수 없습니다.")
 
@@ -558,6 +560,7 @@ try:
                     🖨️ 현재 화면 전체를 PDF로 다운로드 (인쇄)
                 </button>
             """, height=70)
+
 except Exception as e:
-    st.error(f"❌ 대시보드 렌더링 중 치명적인 오류가 발생했습니다: {str(e)}")
-    st.warning("데이터 파일의 형식이 맞지 않거나, 컬럼명이 변경되었을 수 있습니다.")
+    st.error(f"❌ 대시보드 렌더링 중 오류가 발생했습니다. 원인: {str(e)}")
+    st.warning("데이터 파일의 형식이 맞지 않거나, 필수 컬럼명(사용량, 용도 등)이 누락되었을 수 있습니다.")
