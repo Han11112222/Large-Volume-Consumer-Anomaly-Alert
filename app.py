@@ -174,11 +174,13 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         
         df_csv_tab = df_csv.copy()
         if not df_csv_tab.empty:
+            # 🟢 GJ 변환
             if unit_str == "GJ" and "사용량(mj)" in df_csv_tab.columns:
                 df_csv_tab["사용량(mj)"] = pd.to_numeric(df_csv_tab["사용량(mj)"], errors="coerce").fillna(0) / 1000.0
             elif unit_str == "천m³" and "사용량(m3)" in df_csv_tab.columns:
                 df_csv_tab["사용량(m3)"] = pd.to_numeric(df_csv_tab["사용량(m3)"], errors="coerce").fillna(0) / 1000.0
                 
+            # 날짜 파싱
             df_csv_tab["날짜_파싱"] = pd.to_datetime("2026-03-01")
             date_col = None
             for c in ["청구년월", "매출년월", "년월", "기준년월"]:
@@ -203,14 +205,27 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             df_csv_tab["연_csv"] = df_csv_tab["날짜_파싱"].dt.year
             df_csv_tab["월_csv"] = df_csv_tab["날짜_파싱"].dt.month
             
-            # 🟢 에러 방지: 데이터가 1개여도 안전하게 리스트로 감싸기
-            avail_years = sorted(list(set(df_csv_tab["연_csv"].dropna().tolist())))
+            # 🟢 강력한 에러 방지(Fail-Safe): 연도 데이터가 이상해도 절대 튕기지 않음
+            try:
+                raw_years = df_csv_tab["연_csv"].dropna().unique()
+                if np.isscalar(raw_years):
+                    raw_years = [raw_years]
+                avail_years = sorted(list(set([int(y) for y in raw_years])))
+            except Exception:
+                avail_years = [2024, 2025, 2026]
+
             if avail_years:
-                years_available = [int(y) for y in avail_years]
+                years_available = avail_years
                 max_year = max(years_available)
-                max_month = df_csv_tab[df_csv_tab["연_csv"] == max_year]["월_csv"].max()
+                
+                try:
+                    max_month = int(df_csv_tab[df_csv_tab["연_csv"] == max_year]["월_csv"].max())
+                    if pd.isna(max_month): max_month = 3
+                except:
+                    max_month = 3
+                    
                 default_y_index = years_available.index(max_year) if max_year in years_available else len(years_available) - 1
-                default_m_index = int(max_month - 1) if pd.notna(max_month) else 2
+                default_m_index = max(0, max_month - 1)
         
         c_y, c_m, c_empty = st.columns([1, 1, 2])
         with c_y:
@@ -302,7 +317,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 ind_comp_graph = pd.merge(curr_ind_grp, prev_ind_grp, on=grp_col, how="outer").fillna(0)
                 ind_comp_graph = ind_comp_graph.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                 
-                # 🟢 막대그래프에서 '기타' 삭제 (Top 10만)
+                # 🟢 막대그래프에서 '기타' 삭제 (Top 10만 표시하여 깔끔하게)
                 if len(ind_comp_graph) > 10:
                     ind_comp_plot = ind_comp_graph.iloc[:10].copy()
                 else:
@@ -324,7 +339,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
 
             # =========================================================
-            # 4. 세부 업종별 비교표
+            # 4. 세부 업종별 비교표 (표에는 총계 파악을 위해 '기타' 유지)
             # =========================================================
             if grp_col in df_u.columns:
                 st.markdown(f"**■ 🏢 {usage_name} 세부 업종별 비교표**")
