@@ -62,7 +62,6 @@ def load_safe_csv(file_bytes) -> pd.DataFrame:
     for enc in encodings:
         try:
             df = pd.read_csv(io.BytesIO(file_bytes), encoding=enc, thousands=',')
-            # 컬럼명의 숨은 공백 및 BOM 완벽 제거
             df.columns = df.columns.astype(str).str.strip().str.replace('\ufeff', '')
             return df
         except Exception:
@@ -85,25 +84,6 @@ def geocode_address(address: str, api_key: str = "") -> Tuple[float, float]:
     lat = 35.8714 + random.uniform(-0.06, 0.06)
     lon = 128.6014 + random.uniform(-0.06, 0.06)
     return lat, lon
-
-# 🟢 KeyError 원천 차단: 튕기지 않는 안전한 용도 필터링 로직
-def get_usage_data(df, usage_name):
-    if df is None or df.empty:
-        return pd.DataFrame()
-    
-    if "용도" not in df.columns:
-        return pd.DataFrame()
-    
-    if usage_name == "산업용":
-        return df[df["용도"] == "산업용"]
-    elif usage_name == "업무용":
-        # .get()을 사용하여 컬럼이 없어도 에러 대신 빈 값 처리
-        prod_series = df.get("상품명", pd.Series([""] * len(df), index=df.index)).astype(str).str.replace(r"\s+", "", regex=True)
-        mask = (df["용도"] == "업무용") | (prod_series.isin(["냉난방용(업무)", "업무난방용", "주한미군"]))
-        return df[mask]
-    else:
-        return df[df["용도"] == usage_name]
-
 
 # ─────────────────────────────────────────────────────────
 # 사이드바
@@ -131,11 +111,9 @@ with st.sidebar:
     st.subheader("🗺️ 지도 API 키")
     kakao_key = st.text_input("카카오 REST API 키", type="password", help="키가 없으면 대구 임의의 좌표로 매핑됩니다.")
 
-
 # ─────────────────────────────────────────────────────────
 # 본문 로직
 # ─────────────────────────────────────────────────────────
-
 df_csv = pd.DataFrame()
 
 if src_csv == "레포 파일 사용":
@@ -164,7 +142,6 @@ rpt_tabs = st.tabs(["열량 기준 (GJ)", "부피 기준 (천m³)"])
 
 for idx, rpt_tab in enumerate(rpt_tabs):
     with rpt_tab:
-        # 🟢 단위 세팅 (명확히 GJ 표기)
         if idx == 0:
             unit_str = "GJ"
             val_col = "사용량(mj)"
@@ -182,14 +159,11 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         
         df_csv_tab = df_csv.copy()
         if not df_csv_tab.empty:
-            
-            # 🟢 GJ 변환: MJ를 1000으로 나누어 완벽한 GJ 수치로 만듦
             if unit_str == "GJ" and "사용량(mj)" in df_csv_tab.columns:
                 df_csv_tab["사용량(mj)"] = pd.to_numeric(df_csv_tab["사용량(mj)"], errors="coerce").fillna(0) / 1000.0
             elif unit_str == "천m³" and "사용량(m3)" in df_csv_tab.columns:
                 df_csv_tab["사용량(m3)"] = pd.to_numeric(df_csv_tab["사용량(m3)"], errors="coerce").fillna(0) / 1000.0
                 
-            # 날짜 파싱 로직
             df_csv_tab["날짜_파싱"] = pd.to_datetime("2026-03-01")
             date_col = None
             for c in ["청구년월", "매출년월", "년월", "기준년월"]:
@@ -238,12 +212,25 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         def render_full_usage_report(usage_name, section_num, key_sfx):
             st.markdown(f"""<div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;"><h4 style="margin: 0;">📈 {section_num}. 용도별 판매량 분석 : {usage_name}</h4></div>""", unsafe_allow_html=True)
             
-            if df_csv_tab.empty or "용도" not in df_csv_tab.columns or val_col not in df_csv_tab.columns:
-                st.info("데이터가 부족하여 차트를 표시할 수 없습니다. (데이터에 '용도' 또는 사용량 컬럼이 있는지 확인해주세요)")
+            if df_csv_tab.empty or val_col not in df_csv_tab.columns:
+                st.info("데이터가 부족하여 차트를 표시할 수 없습니다.")
                 return
 
-            df_u = get_usage_data(df_csv_tab, usage_name)
-            df_u = df_u[df_u["월_csv"] <= max_month]
+            # 원본 코드 방식 존중: 상품명 컬럼을 안전하게 변환
+            if "상품명" in df_csv_tab.columns:
+                csv_products = df_csv_tab["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
+            else:
+                csv_products = pd.Series([""] * len(df_csv_tab))
+
+            if usage_name == "산업용":
+                df_u = df_csv_tab[(csv_products == "산업용") & (df_csv_tab["월_csv"] <= max_month)].copy()
+                grp_col = "업종"
+            else: 
+                valid_biz_nospaces = ["냉난방용(업무)", "업무난방용", "주한미군"]
+                df_u = df_csv_tab[(csv_products.isin(valid_biz_nospaces)) & (df_csv_tab["월_csv"] <= max_month)].copy()
+                if "업종분류" in df_u.columns:
+                    df_u["업종"] = df_u["업종분류"]
+                grp_col = "업종"
             
             if df_u.empty:
                 st.warning(f"업로드된 데이터에 '{usage_name}' 데이터가 없습니다.")
@@ -300,10 +287,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 st.plotly_chart(fig_m, use_container_width=True)
 
             # --- 3. 세부 업종별 판매량 비교 (그래프) ---
-            grp_col = "업종"
-            if "업종분류" in df_u.columns and "업종" not in df_u.columns:
-                df_u["업종"] = df_u["업종분류"]
-                
             if grp_col in df_u.columns:
                 st.markdown(f"**■ 세부 업종별 판매량 비교 (당해연도 vs 전년도)**")
                 curr_ind_grp = df_u[df_u["연_csv"] == sel_year_rpt].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
@@ -312,7 +295,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 ind_comp_graph = pd.merge(curr_ind_grp, prev_ind_grp, on=grp_col, how="outer").fillna(0)
                 ind_comp_graph = ind_comp_graph.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                 
-                # 🟢 막대그래프에서 '기타' 삭제하여 비율 왜곡 방지 (Top 10만 표시)
+                # 🟢 요청 1: 막대그래프에서 '기타' 삭제 (Top 10만 표시)
                 if len(ind_comp_graph) > 10:
                     ind_comp_plot = ind_comp_graph.iloc[:10].copy()
                 else:
@@ -331,10 +314,11 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 fig_ind.update_layout(barmode='group', xaxis_title="", yaxis_title=f"판매량({unit_str})", margin=dict(t=10, b=10, l=10, r=10), height=420, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                 st.plotly_chart(fig_ind, use_container_width=True)
 
+            # 🟢 요청 2: 코멘트 기능 완전 삭제 (이 부분에 있던 코멘트 코드 제거됨)
             st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
 
             # =========================================================
-            # 4. 세부 업종별 비교표 (표에는 '기타' 유지하여 총계 맞춤)
+            # 4. 세부 업종별 비교표 (표에는 '기타' 유지)
             # =========================================================
             if grp_col in df_u.columns:
                 st.markdown(f"**■ 🏢 {usage_name} 세부 업종별 비교표**")
@@ -441,7 +425,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             st.plotly_chart(fig_cust_mon, use_container_width=True)
 
         # ─────────────────────────────────────────────────────────
-        # 함수 실행 (🟢 1순위 산업용, 2순위 업무용)
+        # 함수 실행 (🟢 요청 3: 1순위 산업용, 2순위 업무용 배치)
         # ─────────────────────────────────────────────────────────
         render_full_usage_report("산업용", "1", key_sfx)
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
@@ -454,13 +438,20 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("### 🗺️ 3. 대용량 수요처 이상 감지 모니터링 지도")
         st.caption("※ YoY 기준 10% 이상 사용량이 하락한 업체를 지도에 붉은색 마커로 표시하여 현장 방문을 유도합니다.")
         
-        if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns and "용도" in df_csv_tab.columns:
+        if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns:
+            # 🟢 용도 컬럼을 안전하게 생성
             df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month].copy()
+            if "상품명" in df_map_base.columns:
+                df_map_base["상품명_clean"] = df_map_base["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
+                df_map_base["용도_태그"] = np.where(df_map_base["상품명_clean"] == "산업용", "[산업용]", 
+                                             np.where(df_map_base["상품명_clean"].isin(["냉난방용(업무)", "업무난방용", "주한미군"]), "[업무용]", "[기타]"))
+            else:
+                df_map_base["용도_태그"] = "[분류없음]"
+
+            map_curr = df_map_base[df_map_base["연_csv"] == sel_year_rpt].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
+            map_prev = df_map_base[df_map_base["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "전년도"})
             
-            map_curr = df_map_base[df_map_base["연_csv"] == sel_year_rpt].groupby(["고객명", "도로명주소", "용도"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
-            map_prev = df_map_base[df_map_base["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "도로명주소", "용도"], as_index=False)[val_col].sum().rename(columns={val_col: "전년도"})
-            
-            df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소", "용도"], how="inner").fillna(0)
+            df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소", "용도_태그"], how="inner").fillna(0)
             
             df_map_merged["증감률(%)"] = np.where(df_map_merged["전년도"] > 0, ((df_map_merged["당해년도"] - df_map_merged["전년도"]) / df_map_merged["전년도"]) * 100, 0)
             alarm_df = df_map_merged[df_map_merged["증감률(%)"] <= -10].copy()
@@ -478,7 +469,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     lats.append(lat)
                     lons.append(lon)
                     
-                    info = f"<b>[{row['용도']}] {row['고객명']}</b><br/>"
+                    info = f"<b>{row['용도_태그']} {row['고객명']}</b><br/>"
                     info += f"전년: {row['전년도']:,.0f} / 당해: {row['당해년도']:,.0f}<br/>"
                     info += f"증감률: <span style='color:red; font-weight:bold;'>{row['증감률(%)']:.1f}%</span><br/>"
                     info += f"<span style='font-size:0.8em; color:gray;'>{row['도로명주소']}</span>"
@@ -517,7 +508,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 else:
                     st.error("주소 좌표 변환에 실패하여 지도를 표시할 수 없습니다.")
         else:
-            st.info("데이터에 '도로명주소', '고객명', '용도' 컬럼이 없거나 데이터가 부족하여 지도를 생성할 수 없습니다.")
+            st.info("데이터에 필요한 컬럼이 없거나 데이터가 부족하여 지도를 생성할 수 없습니다.")
 
         # ─────────────────────────────────────────────────────────
         # 4. 보고서 출력
