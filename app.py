@@ -174,13 +174,11 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         
         df_csv_tab = df_csv.copy()
         if not df_csv_tab.empty:
-            # 🟢 GJ 변환
             if unit_str == "GJ" and "사용량(mj)" in df_csv_tab.columns:
                 df_csv_tab["사용량(mj)"] = pd.to_numeric(df_csv_tab["사용량(mj)"], errors="coerce").fillna(0) / 1000.0
             elif unit_str == "천m³" and "사용량(m3)" in df_csv_tab.columns:
                 df_csv_tab["사용량(m3)"] = pd.to_numeric(df_csv_tab["사용량(m3)"], errors="coerce").fillna(0) / 1000.0
                 
-            # 날짜 파싱
             df_csv_tab["날짜_파싱"] = pd.to_datetime("2026-03-01")
             date_col = None
             for c in ["청구년월", "매출년월", "년월", "기준년월"]:
@@ -205,12 +203,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             df_csv_tab["연_csv"] = df_csv_tab["날짜_파싱"].dt.year
             df_csv_tab["월_csv"] = df_csv_tab["날짜_파싱"].dt.month
             
-            # 🟢 강력한 에러 방지(Fail-Safe): 연도 데이터가 이상해도 절대 튕기지 않음
+            # 🟢 강력한 에러 방지: tolist()를 사용하여 항상 리스트 형태로 변환
             try:
-                raw_years = df_csv_tab["연_csv"].dropna().unique()
-                if np.isscalar(raw_years):
-                    raw_years = [raw_years]
-                avail_years = sorted(list(set([int(y) for y in raw_years])))
+                avail_years = sorted(df_csv_tab["연_csv"].dropna().astype(int).unique().tolist())
             except Exception:
                 avail_years = [2024, 2025, 2026]
 
@@ -339,7 +334,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
 
             # =========================================================
-            # 4. 세부 업종별 비교표 (표에는 총계 파악을 위해 '기타' 유지)
+            # 4. 세부 업종별 비교표
             # =========================================================
             if grp_col in df_u.columns:
                 st.markdown(f"**■ 🏢 {usage_name} 세부 업종별 비교표**")
@@ -460,13 +455,18 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("### 🗺️ 3. 대용량 수요처 이상 감지 모니터링 지도")
         st.caption("※ YoY 기준 10% 이상 사용량이 하락한 업체를 지도에 붉은색 마커로 표시하여 현장 방문을 유도합니다.")
         
-        if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns and "용도" in df_csv_tab.columns:
+        if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns:
             df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month].copy()
             
-            map_curr = df_map_base[df_map_base["연_csv"] == sel_year_rpt].groupby(["고객명", "도로명주소", "용도"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
-            map_prev = df_map_base[df_map_base["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "도로명주소", "용도"], as_index=False)[val_col].sum().rename(columns={val_col: "전년도"})
+            # 🟢 용도 컬럼 안전하게 생성
+            prod_s = df_map_base.get("상품명", pd.Series([""] * len(df_map_base), index=df_map_base.index)).astype(str).str.replace(r"\s+", "", regex=True)
+            df_map_base["용도_태그"] = np.where(prod_s == "산업용", "[산업용]", 
+                                         np.where(prod_s.isin(["냉난방용(업무)", "업무난방용", "주한미군"]), "[업무용]", "[기타]"))
+
+            map_curr = df_map_base[df_map_base["연_csv"] == sel_year_rpt].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
+            map_prev = df_map_base[df_map_base["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "전년도"})
             
-            df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소", "용도"], how="inner").fillna(0)
+            df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소", "용도_태그"], how="inner").fillna(0)
             
             df_map_merged["증감률(%)"] = np.where(df_map_merged["전년도"] > 0, ((df_map_merged["당해년도"] - df_map_merged["전년도"]) / df_map_merged["전년도"]) * 100, 0)
             alarm_df = df_map_merged[df_map_merged["증감률(%)"] <= -10].copy()
@@ -484,7 +484,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     lats.append(lat)
                     lons.append(lon)
                     
-                    info = f"<b>[{row['용도']}] {row['고객명']}</b><br/>"
+                    info = f"<b>{row['용도_태그']} {row['고객명']}</b><br/>"
                     info += f"전년: {row['전년도']:,.0f} / 당해: {row['당해년도']:,.0f}<br/>"
                     info += f"증감률: <span style='color:red; font-weight:bold;'>{row['증감률(%)']:.1f}%</span><br/>"
                     info += f"<span style='font-size:0.8em; color:gray;'>{row['도로명주소']}</span>"
@@ -523,7 +523,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 else:
                     st.error("주소 좌표 변환에 실패하여 지도를 표시할 수 없습니다.")
         else:
-            st.info("데이터에 '도로명주소', '고객명', '용도' 컬럼이 없거나 데이터가 부족하여 지도를 생성할 수 없습니다.")
+            st.info("데이터에 필요한 컬럼이 없거나 데이터가 부족하여 지도를 생성할 수 없습니다.")
 
         # ─────────────────────────────────────────────────────────
         # 4. 보고서 출력
