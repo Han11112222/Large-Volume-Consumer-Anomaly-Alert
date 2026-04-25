@@ -62,7 +62,8 @@ def load_safe_csv(file_bytes) -> pd.DataFrame:
     for enc in encodings:
         try:
             df = pd.read_csv(io.BytesIO(file_bytes), encoding=enc, thousands=',')
-            df.columns = df.columns.str.strip() 
+            # 컬럼명의 숨은 공백 및 BOM 완벽 제거
+            df.columns = df.columns.astype(str).str.strip().str.replace('\ufeff', '')
             return df
         except Exception:
             pass
@@ -87,9 +88,12 @@ def geocode_address(address: str, api_key: str = "") -> Tuple[float, float]:
 
 # 🟢 KeyError 원천 차단: 안전한 용도 필터링 로직
 def get_usage_data(df, usage_name):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    
     if "용도" not in df.columns:
         return pd.DataFrame()
-        
+    
     if usage_name == "산업용":
         return df[df["용도"] == "산업용"]
     elif usage_name == "업무용":
@@ -142,15 +146,12 @@ if src_csv == "레포 파일 사용":
     csv_list = []
     for p in all_csvs:
         try:
-            temp_df = pd.read_csv(p, encoding="utf-8-sig", thousands=',')
-            temp_df.columns = temp_df.columns.str.strip()
-            csv_list.append(temp_df)
+            with open(p, 'rb') as f:
+                temp_df = load_safe_csv(f.read())
+                if not temp_df.empty:
+                    csv_list.append(temp_df)
         except:
-            try: 
-                temp_df = pd.read_csv(p, encoding="cp949", thousands=',')
-                temp_df.columns = temp_df.columns.str.strip()
-                csv_list.append(temp_df)
-            except: pass
+            pass
     if csv_list: df_csv = pd.concat(csv_list, ignore_index=True)
 
 if df_csv.empty and 'merged_csv_df' in st.session_state:
@@ -233,13 +234,13 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("<hr style='margin: 10px 0 30px 0;'>", unsafe_allow_html=True)
 
         # ─────────────────────────────────────────────────────────
-        # 통합 분석 함수 (오직 CSV 데이터만 100% 사용)
+        # 통합 분석 함수
         # ─────────────────────────────────────────────────────────
         def render_full_usage_report(usage_name, section_num, key_sfx):
             st.markdown(f"""<div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;"><h4 style="margin: 0;">📈 {section_num}. 용도별 판매량 분석 : {usage_name}</h4></div>""", unsafe_allow_html=True)
             
             if df_csv_tab.empty or "용도" not in df_csv_tab.columns or val_col not in df_csv_tab.columns:
-                st.info("데이터가 부족하여 차트를 표시할 수 없습니다.")
+                st.info("데이터가 부족하여 차트를 표시할 수 없습니다. (데이터에 '용도' 또는 사용량 컬럼이 있는지 확인해주세요)")
                 return
 
             df_u = get_usage_data(df_csv_tab, usage_name)
