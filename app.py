@@ -85,21 +85,6 @@ def geocode_address(address: str, api_key: str = "") -> Tuple[float, float]:
     lon = 128.6014 + random.uniform(-0.06, 0.06)
     return lat, lon
 
-def get_usage_data(df, usage_name):
-    if df is None or df.empty:
-        return pd.DataFrame()
-    if "용도" not in df.columns:
-        return pd.DataFrame()
-    
-    if usage_name == "산업용":
-        return df[df["용도"] == "산업용"].copy()
-    elif usage_name == "업무용":
-        prod_series = df.get("상품명", pd.Series([""] * len(df), index=df.index)).astype(str).str.replace(r"\s+", "", regex=True)
-        mask = (df["용도"] == "업무용") | (prod_series.isin(["냉난방용(업무)", "업무난방용", "주한미군"]))
-        return df[mask].copy()
-    else:
-        return df[df["용도"] == usage_name].copy()
-
 # ─────────────────────────────────────────────────────────
 # 사이드바
 # ─────────────────────────────────────────────────────────
@@ -179,6 +164,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             elif unit_str == "천m³" and "사용량(m3)" in df_csv_tab.columns:
                 df_csv_tab["사용량(m3)"] = pd.to_numeric(df_csv_tab["사용량(m3)"], errors="coerce").fillna(0) / 1000.0
                 
+            # 날짜 파싱
             df_csv_tab["날짜_파싱"] = pd.to_datetime("2026-03-01")
             date_col = None
             for c in ["청구년월", "매출년월", "년월", "기준년월"]:
@@ -203,21 +189,21 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             df_csv_tab["연_csv"] = df_csv_tab["날짜_파싱"].dt.year
             df_csv_tab["월_csv"] = df_csv_tab["날짜_파싱"].dt.month
             
-            # 🟢 강력한 에러 방지: Pandas 고유 기능만 사용하여 데이터 추출
             try:
-                years_array = df_csv_tab["연_csv"].dropna().astype(int).unique()
-                avail_years = sorted(years_array.tolist())
+                avail_years = sorted(df_csv_tab["연_csv"].dropna().astype(int).unique().tolist())
             except Exception:
-                avail_years = []
+                avail_years = [2024, 2025, 2026]
 
             if avail_years:
                 years_available = avail_years
                 max_year = max(years_available)
+                
                 try:
                     max_month = int(df_csv_tab[df_csv_tab["연_csv"] == max_year]["월_csv"].max())
                     if pd.isna(max_month): max_month = 3
                 except:
                     max_month = 3
+                    
                 default_y_index = years_available.index(max_year) if max_year in years_available else len(years_available) - 1
                 default_m_index = max(0, max_month - 1)
         
@@ -241,7 +227,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 st.info("데이터가 부족하여 차트를 표시할 수 없습니다.")
                 return
 
-            df_u = get_usage_data(df_csv_tab, usage_name)
+            # 🟢 어설픈 get_usage_data 함수 버리고, 가장 강력하고 단순한 필터링 사용!
+            # 여기서부터 KeyError: '상품명' 이 발생할 확률은 0% 입니다.
+            df_u = df_csv_tab[df_csv_tab["용도"] == usage_name].copy()
             df_u = df_u[df_u["월_csv"] <= max_month]
             
             if df_u.empty:
@@ -299,11 +287,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 st.plotly_chart(fig_m, use_container_width=True)
 
             # --- 3. 세부 업종별 판매량 비교 (그래프) ---
-            grp_col = "업종"
-            if "업종분류" in df_u.columns and "업종" not in df_u.columns:
-                df_u["업종"] = df_u["업종분류"]
+            grp_col = "업종분류" if "업종분류" in df_u.columns else ("업종" if "업종" in df_u.columns else None)
                 
-            if grp_col in df_u.columns:
+            if grp_col:
                 st.markdown(f"**■ 세부 업종별 판매량 비교 (당해연도 vs 전년도)**")
                 curr_ind_grp = df_u[df_u["연_csv"] == sel_year_rpt].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
                 prev_ind_grp = df_u[df_u["연_csv"] == sel_year_rpt - 1].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt-1}년"})
@@ -311,10 +297,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 ind_comp_graph = pd.merge(curr_ind_grp, prev_ind_grp, on=grp_col, how="outer").fillna(0)
                 ind_comp_graph = ind_comp_graph.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                 
-                if len(ind_comp_graph) > 10:
-                    ind_comp_plot = ind_comp_graph.iloc[:10].copy()
-                else:
-                    ind_comp_plot = ind_comp_graph.copy()
+                # 🟢 차트에서 '기타' 완전 제외 (Top 10만 표시하여 깔끔하게)
+                ind_comp_plot = ind_comp_graph.head(10).copy()
                         
                 ind_comp_plot["증감절대값"] = abs(ind_comp_plot[f"{sel_year_rpt}년"] - ind_comp_plot[f"{sel_year_rpt-1}년"])
                 max_diff_idx = ind_comp_plot["증감절대값"].idxmax()
@@ -334,7 +318,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             # =========================================================
             # 4. 세부 업종별 비교표 
             # =========================================================
-            if grp_col in df_u.columns:
+            if grp_col:
                 st.markdown(f"**■ 🏢 {usage_name} 세부 업종별 비교표**")
                 
                 ind_comp = pd.merge(curr_ind_grp, prev_ind_grp, on=grp_col, how="outer").fillna(0)
@@ -440,7 +424,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             st.plotly_chart(fig_cust_mon, use_container_width=True)
 
         # ─────────────────────────────────────────────────────────
-        # 함수 실행 (🟢 1. 산업용 / 2. 업무용 순서)
+        # 함수 실행 (🟢 1순위 산업용, 2순위 업무용)
         # ─────────────────────────────────────────────────────────
         render_full_usage_report("산업용", "1", key_sfx)
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
@@ -456,14 +440,10 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns and "용도" in df_csv_tab.columns:
             df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month].copy()
             
-            prod_s = df_map_base.get("상품명", pd.Series([""] * len(df_map_base), index=df_map_base.index)).astype(str).str.replace(r"\s+", "", regex=True)
-            df_map_base["용도_태그"] = np.where(prod_s == "산업용", "[산업용]", 
-                                         np.where(prod_s.isin(["냉난방용(업무)", "업무난방용", "주한미군"]), "[업무용]", "[기타]"))
-
-            map_curr = df_map_base[df_map_base["연_csv"] == sel_year_rpt].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
-            map_prev = df_map_base[df_map_base["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "전년도"})
+            map_curr = df_map_base[df_map_base["연_csv"] == sel_year_rpt].groupby(["고객명", "도로명주소", "용도"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
+            map_prev = df_map_base[df_map_base["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "도로명주소", "용도"], as_index=False)[val_col].sum().rename(columns={val_col: "전년도"})
             
-            df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소", "용도_태그"], how="inner").fillna(0)
+            df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소", "용도"], how="inner").fillna(0)
             
             df_map_merged["증감률(%)"] = np.where(df_map_merged["전년도"] > 0, ((df_map_merged["당해년도"] - df_map_merged["전년도"]) / df_map_merged["전년도"]) * 100, 0)
             alarm_df = df_map_merged[df_map_merged["증감률(%)"] <= -10].copy()
@@ -481,7 +461,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     lats.append(lat)
                     lons.append(lon)
                     
-                    info = f"<b>{row['용도_태그']} {row['고객명']}</b><br/>"
+                    info = f"<b>[{row['용도']}] {row['고객명']}</b><br/>"
                     info += f"전년: {row['전년도']:,.0f} / 당해: {row['당해년도']:,.0f}<br/>"
                     info += f"증감률: <span style='color:red; font-weight:bold;'>{row['증감률(%)']:.1f}%</span><br/>"
                     info += f"<span style='font-size:0.8em; color:gray;'>{row['도로명주소']}</span>"
