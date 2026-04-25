@@ -85,6 +85,22 @@ def geocode_address(address: str, api_key: str = "") -> Tuple[float, float]:
     lon = 128.6014 + random.uniform(-0.06, 0.06)
     return lat, lon
 
+# 🟢 KeyError 원천 차단: 안전한 용도 필터링
+def get_usage_data(df, usage_name):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    if "용도" not in df.columns:
+        return pd.DataFrame()
+    
+    if usage_name == "산업용":
+        return df[df["용도"] == "산업용"].copy()
+    elif usage_name == "업무용":
+        prod_series = df.get("상품명", pd.Series([""] * len(df), index=df.index)).astype(str).str.replace(r"\s+", "", regex=True)
+        mask = (df["용도"] == "업무용") | (prod_series.isin(["냉난방용(업무)", "업무난방용", "주한미군"]))
+        return df[mask].copy()
+    else:
+        return df[df["용도"] == usage_name].copy()
+
 # ─────────────────────────────────────────────────────────
 # 사이드바
 # ─────────────────────────────────────────────────────────
@@ -159,11 +175,13 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         
         df_csv_tab = df_csv.copy()
         if not df_csv_tab.empty:
+            # 🟢 GJ 변환
             if unit_str == "GJ" and "사용량(mj)" in df_csv_tab.columns:
                 df_csv_tab["사용량(mj)"] = pd.to_numeric(df_csv_tab["사용량(mj)"], errors="coerce").fillna(0) / 1000.0
             elif unit_str == "천m³" and "사용량(m3)" in df_csv_tab.columns:
                 df_csv_tab["사용량(m3)"] = pd.to_numeric(df_csv_tab["사용량(m3)"], errors="coerce").fillna(0) / 1000.0
                 
+            # 날짜 파싱
             df_csv_tab["날짜_파싱"] = pd.to_datetime("2026-03-01")
             date_col = None
             for c in ["청구년월", "매출년월", "년월", "기준년월"]:
@@ -212,25 +230,12 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         def render_full_usage_report(usage_name, section_num, key_sfx):
             st.markdown(f"""<div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;"><h4 style="margin: 0;">📈 {section_num}. 용도별 판매량 분석 : {usage_name}</h4></div>""", unsafe_allow_html=True)
             
-            if df_csv_tab.empty or val_col not in df_csv_tab.columns:
+            if df_csv_tab.empty or "용도" not in df_csv_tab.columns or val_col not in df_csv_tab.columns:
                 st.info("데이터가 부족하여 차트를 표시할 수 없습니다.")
                 return
 
-            # 원본 코드 방식 존중: 상품명 컬럼을 안전하게 변환
-            if "상품명" in df_csv_tab.columns:
-                csv_products = df_csv_tab["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
-            else:
-                csv_products = pd.Series([""] * len(df_csv_tab))
-
-            if usage_name == "산업용":
-                df_u = df_csv_tab[(csv_products == "산업용") & (df_csv_tab["월_csv"] <= max_month)].copy()
-                grp_col = "업종"
-            else: 
-                valid_biz_nospaces = ["냉난방용(업무)", "업무난방용", "주한미군"]
-                df_u = df_csv_tab[(csv_products.isin(valid_biz_nospaces)) & (df_csv_tab["월_csv"] <= max_month)].copy()
-                if "업종분류" in df_u.columns:
-                    df_u["업종"] = df_u["업종분류"]
-                grp_col = "업종"
+            df_u = get_usage_data(df_csv_tab, usage_name)
+            df_u = df_u[df_u["월_csv"] <= max_month]
             
             if df_u.empty:
                 st.warning(f"업로드된 데이터에 '{usage_name}' 데이터가 없습니다.")
@@ -287,6 +292,10 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 st.plotly_chart(fig_m, use_container_width=True)
 
             # --- 3. 세부 업종별 판매량 비교 (그래프) ---
+            grp_col = "업종"
+            if "업종분류" in df_u.columns and "업종" not in df_u.columns:
+                df_u["업종"] = df_u["업종분류"]
+                
             if grp_col in df_u.columns:
                 st.markdown(f"**■ 세부 업종별 판매량 비교 (당해연도 vs 전년도)**")
                 curr_ind_grp = df_u[df_u["연_csv"] == sel_year_rpt].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
@@ -295,11 +304,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 ind_comp_graph = pd.merge(curr_ind_grp, prev_ind_grp, on=grp_col, how="outer").fillna(0)
                 ind_comp_graph = ind_comp_graph.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                 
-                # 🟢 요청 1: 막대그래프에서 '기타' 삭제 (Top 10만 표시)
-                if len(ind_comp_graph) > 10:
-                    ind_comp_plot = ind_comp_graph.iloc[:10].copy()
-                else:
-                    ind_comp_plot = ind_comp_graph.copy()
+                # 🟢 차트에서 '기타' 완전 제외 (Top 10만 표시하여 깔끔하게)
+                ind_comp_plot = ind_comp_graph.head(10).copy()
                         
                 ind_comp_plot["증감절대값"] = abs(ind_comp_plot[f"{sel_year_rpt}년"] - ind_comp_plot[f"{sel_year_rpt-1}년"])
                 max_diff_idx = ind_comp_plot["증감절대값"].idxmax()
@@ -314,11 +320,10 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 fig_ind.update_layout(barmode='group', xaxis_title="", yaxis_title=f"판매량({unit_str})", margin=dict(t=10, b=10, l=10, r=10), height=420, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                 st.plotly_chart(fig_ind, use_container_width=True)
 
-            # 🟢 요청 2: 코멘트 기능 완전 삭제 (이 부분에 있던 코멘트 코드 제거됨)
             st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
 
             # =========================================================
-            # 4. 세부 업종별 비교표 (표에는 '기타' 유지)
+            # 4. 세부 업종별 비교표 (표에는 총계 파악을 위해 '기타' 유지)
             # =========================================================
             if grp_col in df_u.columns:
                 st.markdown(f"**■ 🏢 {usage_name} 세부 업종별 비교표**")
@@ -335,20 +340,21 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     o_rate = (o_c / o_p * 100) if o_p > 0 else 0
                     
                     others_row = pd.DataFrame([{grp_col: "기타", f"{sel_year_rpt}년": o_c, f"{sel_year_rpt-1}년": o_p, "증감": o_diff, "대비(%)": o_rate}])
-                    ind_comp = pd.concat([top10_df, others_row], ignore_index=True)
+                    ind_comp_tbl = pd.concat([top10_df, others_row], ignore_index=True)
+                else:
+                    ind_comp_tbl = ind_comp.copy()
+                    ind_comp_tbl["증감"] = ind_comp_tbl[f"{sel_year_rpt}년"] - ind_comp_tbl[f"{sel_year_rpt-1}년"]
+                    ind_comp_tbl["대비(%)"] = np.where(ind_comp_tbl[f"{sel_year_rpt-1}년"] > 0, (ind_comp_tbl[f"{sel_year_rpt}년"] / ind_comp_tbl[f"{sel_year_rpt-1}년"]) * 100, 0)
                 
-                ind_comp["증감"] = ind_comp[f"{sel_year_rpt}년"] - ind_comp[f"{sel_year_rpt-1}년"]
-                ind_comp["대비(%)"] = np.where(ind_comp[f"{sel_year_rpt-1}년"] > 0, (ind_comp[f"{sel_year_rpt}년"] / ind_comp[f"{sel_year_rpt-1}년"]) * 100, 0)
-                
-                sum_curr_tbl = ind_comp[f"{sel_year_rpt}년"].sum()
-                sum_prev_tbl = ind_comp[f"{sel_year_rpt-1}년"].sum()
+                sum_curr_tbl = ind_comp_tbl[f"{sel_year_rpt}년"].sum()
+                sum_prev_tbl = ind_comp_tbl[f"{sel_year_rpt-1}년"].sum()
                 sum_diff_tbl = sum_curr_tbl - sum_prev_tbl
                 sum_rate_tbl = (sum_curr_tbl / sum_prev_tbl * 100) if sum_prev_tbl > 0 else 0
                 
                 sub_ind_row = pd.DataFrame([{grp_col: "💡 총계", f"{sel_year_rpt}년": sum_curr_tbl, f"{sel_year_rpt-1}년": sum_prev_tbl, "증감": sum_diff_tbl, "대비(%)": sum_rate_tbl}])
-                ind_comp = pd.concat([ind_comp, sub_ind_row], ignore_index=True)
+                ind_comp_tbl = pd.concat([ind_comp_tbl, sub_ind_row], ignore_index=True)
                 
-                st.dataframe(center_style(ind_comp.style.format({f"{sel_year_rpt}년": "{:,.0f}", f"{sel_year_rpt-1}년": "{:,.0f}", "증감": "{:,.0f}", "대비(%)": "{:,.1f}"}).apply(highlight_subtotal, axis=1)), use_container_width=True, hide_index=True)
+                st.dataframe(center_style(ind_comp_tbl.style.format({f"{sel_year_rpt}년": "{:,.0f}", f"{sel_year_rpt-1}년": "{:,.0f}", "증감": "{:,.0f}", "대비(%)": "{:,.1f}"}).apply(highlight_subtotal, axis=1)), use_container_width=True, hide_index=True)
                 st.markdown("<br>", unsafe_allow_html=True)
                 
                 # =========================================================
@@ -360,7 +366,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     c_prev_all = df_u[df_u["연_csv"] == sel_year_rpt - 1].groupby(["고객명", grp_col], as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt-1}년"})
                     
                     grp_top = pd.merge(c_curr_all, c_prev_all, on=["고객명", grp_col], how="outer").fillna(0)
-                    
                     grp_top = grp_top.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                     grp_top = grp_top[(grp_top[f"{sel_year_rpt}년"] > 0) | (grp_top[f"{sel_year_rpt-1}년"] > 0)].reset_index(drop=True)
 
@@ -425,7 +430,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             st.plotly_chart(fig_cust_mon, use_container_width=True)
 
         # ─────────────────────────────────────────────────────────
-        # 함수 실행 (🟢 요청 3: 1순위 산업용, 2순위 업무용 배치)
+        # 함수 실행 (🟢 1순위 산업용, 2순위 업무용)
         # ─────────────────────────────────────────────────────────
         render_full_usage_report("산업용", "1", key_sfx)
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
@@ -438,15 +443,13 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("### 🗺️ 3. 대용량 수요처 이상 감지 모니터링 지도")
         st.caption("※ YoY 기준 10% 이상 사용량이 하락한 업체를 지도에 붉은색 마커로 표시하여 현장 방문을 유도합니다.")
         
-        if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns:
-            # 🟢 용도 컬럼을 안전하게 생성
+        if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns and "용도" in df_csv_tab.columns:
             df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month].copy()
-            if "상품명" in df_map_base.columns:
-                df_map_base["상품명_clean"] = df_map_base["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
-                df_map_base["용도_태그"] = np.where(df_map_base["상품명_clean"] == "산업용", "[산업용]", 
-                                             np.where(df_map_base["상품명_clean"].isin(["냉난방용(업무)", "업무난방용", "주한미군"]), "[업무용]", "[기타]"))
-            else:
-                df_map_base["용도_태그"] = "[분류없음]"
+            
+            # 🟢 에러 방지: get() 사용하여 안전하게 추출
+            prod_s = df_map_base.get("상품명", pd.Series([""] * len(df_map_base), index=df_map_base.index)).astype(str).str.replace(r"\s+", "", regex=True)
+            df_map_base["용도_태그"] = np.where(prod_s == "산업용", "[산업용]", 
+                                         np.where(prod_s.isin(["냉난방용(업무)", "업무난방용", "주한미군"]), "[업무용]", "[기타]"))
 
             map_curr = df_map_base[df_map_base["연_csv"] == sel_year_rpt].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
             map_prev = df_map_base[df_map_base["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "전년도"})
