@@ -203,22 +203,21 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             df_csv_tab["연_csv"] = df_csv_tab["날짜_파싱"].dt.year
             df_csv_tab["월_csv"] = df_csv_tab["날짜_파싱"].dt.month
             
-            # 🟢 강력한 에러 방지: tolist()를 사용하여 항상 리스트 형태로 변환
+            # 🟢 강력한 에러 방지: Pandas 고유 기능만 사용하여 데이터 추출
             try:
-                avail_years = sorted(df_csv_tab["연_csv"].dropna().astype(int).unique().tolist())
+                years_array = df_csv_tab["연_csv"].dropna().astype(int).unique()
+                avail_years = sorted(years_array.tolist())
             except Exception:
-                avail_years = [2024, 2025, 2026]
+                avail_years = []
 
             if avail_years:
                 years_available = avail_years
                 max_year = max(years_available)
-                
                 try:
                     max_month = int(df_csv_tab[df_csv_tab["연_csv"] == max_year]["월_csv"].max())
                     if pd.isna(max_month): max_month = 3
                 except:
                     max_month = 3
-                    
                 default_y_index = years_available.index(max_year) if max_year in years_available else len(years_available) - 1
                 default_m_index = max(0, max_month - 1)
         
@@ -312,7 +311,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 ind_comp_graph = pd.merge(curr_ind_grp, prev_ind_grp, on=grp_col, how="outer").fillna(0)
                 ind_comp_graph = ind_comp_graph.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                 
-                # 🟢 막대그래프에서 '기타' 삭제 (Top 10만 표시하여 깔끔하게)
                 if len(ind_comp_graph) > 10:
                     ind_comp_plot = ind_comp_graph.iloc[:10].copy()
                 else:
@@ -334,7 +332,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
 
             # =========================================================
-            # 4. 세부 업종별 비교표
+            # 4. 세부 업종별 비교표 
             # =========================================================
             if grp_col in df_u.columns:
                 st.markdown(f"**■ 🏢 {usage_name} 세부 업종별 비교표**")
@@ -442,7 +440,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             st.plotly_chart(fig_cust_mon, use_container_width=True)
 
         # ─────────────────────────────────────────────────────────
-        # 함수 실행 (🟢 1순위 산업용, 2순위 업무용)
+        # 함수 실행 (🟢 1. 산업용 / 2. 업무용 순서)
         # ─────────────────────────────────────────────────────────
         render_full_usage_report("산업용", "1", key_sfx)
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
@@ -455,10 +453,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("### 🗺️ 3. 대용량 수요처 이상 감지 모니터링 지도")
         st.caption("※ YoY 기준 10% 이상 사용량이 하락한 업체를 지도에 붉은색 마커로 표시하여 현장 방문을 유도합니다.")
         
-        if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns:
+        if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns and "용도" in df_csv_tab.columns:
             df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month].copy()
             
-            # 🟢 용도 컬럼 안전하게 생성
             prod_s = df_map_base.get("상품명", pd.Series([""] * len(df_map_base), index=df_map_base.index)).astype(str).str.replace(r"\s+", "", regex=True)
             df_map_base["용도_태그"] = np.where(prod_s == "산업용", "[산업용]", 
                                          np.where(prod_s.isin(["냉난방용(업무)", "업무난방용", "주한미군"]), "[업무용]", "[기타]"))
@@ -523,7 +520,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 else:
                     st.error("주소 좌표 변환에 실패하여 지도를 표시할 수 없습니다.")
         else:
-            st.info("데이터에 필요한 컬럼이 없거나 데이터가 부족하여 지도를 생성할 수 없습니다.")
+            st.info("데이터에 '도로명주소', '고객명', '용도' 컬럼이 없거나 데이터가 부족하여 지도를 생성할 수 없습니다.")
 
         # ─────────────────────────────────────────────────────────
         # 4. 보고서 출력
