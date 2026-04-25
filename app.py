@@ -86,7 +86,7 @@ def geocode_address(address: str, api_key: str = "") -> Tuple[float, float]:
     lon = 128.6014 + random.uniform(-0.06, 0.06)
     return lat, lon
 
-# 🟢 KeyError 원천 차단: 안전한 용도 필터링 로직
+# 🟢 KeyError 원천 차단: 튕기지 않는 안전한 용도 필터링 로직
 def get_usage_data(df, usage_name):
     if df is None or df.empty:
         return pd.DataFrame()
@@ -97,11 +97,10 @@ def get_usage_data(df, usage_name):
     if usage_name == "산업용":
         return df[df["용도"] == "산업용"]
     elif usage_name == "업무용":
-        if "상품명" in df.columns:
-            mask = (df["용도"] == "업무용") | (df["상품명"].astype(str).str.replace(r"\s+", "", regex=True).isin(["냉난방용(업무)", "업무난방용", "주한미군"]))
-            return df[mask]
-        else:
-            return df[df["용도"] == "업무용"]
+        # .get()을 사용하여 컬럼이 없어도 에러 대신 빈 값 처리
+        prod_series = df.get("상품명", pd.Series([""] * len(df), index=df.index)).astype(str).str.replace(r"\s+", "", regex=True)
+        mask = (df["용도"] == "업무용") | (prod_series.isin(["냉난방용(업무)", "업무난방용", "주한미군"]))
+        return df[mask]
     else:
         return df[df["용도"] == usage_name]
 
@@ -313,7 +312,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 ind_comp_graph = pd.merge(curr_ind_grp, prev_ind_grp, on=grp_col, how="outer").fillna(0)
                 ind_comp_graph = ind_comp_graph.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                 
-                # 🟢 막대그래프에서 '기타' 삭제하여 비율 왜곡 방지
+                # 🟢 막대그래프에서 '기타' 삭제하여 비율 왜곡 방지 (Top 10만 표시)
                 if len(ind_comp_graph) > 10:
                     ind_comp_plot = ind_comp_graph.iloc[:10].copy()
                 else:
