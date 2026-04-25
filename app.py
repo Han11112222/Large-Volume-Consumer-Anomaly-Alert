@@ -1,10 +1,7 @@
 import io
-import json
-import os
-import re
 import random
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -13,8 +10,6 @@ import plotly.graph_objects as go
 import pydeck as pdk
 import requests
 import streamlit as st
-from github import Github
-
 
 # ─────────────────────────────────────────────────────────
 # 기본 설정
@@ -31,75 +26,6 @@ def set_korean_font():
 
 set_korean_font()
 st.set_page_config(page_title="대용량 수요처 이상 감지 대시보드", layout="wide")
-
-# ─────────────────────────────────────────────────────────
-# 코멘트 DB 저장 (비밀번호 없음)
-# ─────────────────────────────────────────────────────────
-COMMENT_DB_FILE = "report_comments_db.json"
-REPO_NAME = "Han11112222/quarterly-sales-report"
-
-def load_comments_db():
-    if os.path.exists(COMMENT_DB_FILE):
-        try:
-            with open(COMMENT_DB_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-def save_comments_db(db_data):
-    with open(COMMENT_DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(db_data, f, ensure_ascii=False, indent=4)
-    try:
-        if "GITHUB_TOKEN" in st.secrets:
-            token = st.secrets["GITHUB_TOKEN"]
-            g = Github(token)
-            repo = g.get_repo(REPO_NAME)
-            content_string = json.dumps(db_data, ensure_ascii=False, indent=4)
-            try:
-                contents = repo.get_contents(COMMENT_DB_FILE)
-                repo.update_file(contents.path, "Update comments via Streamlit App", content_string, contents.sha)
-            except:
-                repo.create_file(COMMENT_DB_FILE, "Create comments db via Streamlit App", content_string)
-    except Exception:
-        pass
-
-def render_comment_section(title, db_key, curr_db, comments_db, height, placeholder, widget_key):
-    st.markdown(f"**{title}**")
-    saved_text = curr_db.get(db_key, None)
-    
-    if saved_text is not None:
-        url_pattern = re.compile(r'(https?://[^\s]+)')
-        linked_text = url_pattern.sub(r'<a href="\1" target="_blank" style="color: #2563eb; text-decoration: underline; font-weight: bold;">\1</a>', saved_text)
-        formatted_text = linked_text.replace('\n', '<br>')
-        st.markdown(
-            f"""
-            <div style="background-color: #f8f9fa; border: 1px solid #e9ecef; border-left: 4px solid #1f77b4; padding: 15px; border-radius: 4px; color: #1e40af; font-size: 14.5px; line-height: 1.6; margin-bottom: 10px;">
-                {formatted_text}
-            </div>
-            """, unsafe_allow_html=True
-        )
-        
-        with st.expander("📝 코멘트 수정/삭제"):
-            new_text = st.text_area("내용 수정", value=saved_text, height=height, key=f"edit_ta_{widget_key}", label_visibility="collapsed")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("💾 수정 내용 저장", key=f"edit_save_{widget_key}", use_container_width=True):
-                    curr_db[db_key] = new_text
-                    save_comments_db(comments_db)
-                    st.rerun()
-            with col2:
-                if st.button("🗑️ 코멘트 삭제", key=f"del_{widget_key}", use_container_width=True):
-                    curr_db.pop(db_key, None)
-                    save_comments_db(comments_db)
-                    st.rerun()
-    else:
-        input_text = st.text_area("내용 입력", height=height, placeholder=placeholder, key=f"ta_{widget_key}", label_visibility="collapsed")
-        if st.button("💾 이 코멘트 저장", key=f"save_{widget_key}"):
-            curr_db[db_key] = input_text
-            save_comments_db(comments_db)
-            st.rerun()
-
 
 # ─────────────────────────────────────────────────────────
 # 데이터 전처리 유틸
@@ -136,7 +62,7 @@ def load_safe_csv(file_bytes) -> pd.DataFrame:
     for enc in encodings:
         try:
             df = pd.read_csv(io.BytesIO(file_bytes), encoding=enc, thousands=',')
-            df.columns = df.columns.str.strip() 
+            df.columns = df.columns.astype(str).str.strip().str.replace('\ufeff', '')
             return df
         except Exception:
             pass
@@ -159,6 +85,20 @@ def geocode_address(address: str, api_key: str = "") -> Tuple[float, float]:
     lon = 128.6014 + random.uniform(-0.06, 0.06)
     return lat, lon
 
+def get_usage_data(df, usage_name):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    if "용도" not in df.columns:
+        return pd.DataFrame()
+    
+    if usage_name == "산업용":
+        return df[df["용도"] == "산업용"].copy()
+    elif usage_name == "업무용":
+        prod_series = df.get("상품명", pd.Series([""] * len(df), index=df.index)).astype(str).str.replace(r"\s+", "", regex=True)
+        mask = (df["용도"] == "업무용") | (prod_series.isin(["냉난방용(업무)", "업무난방용", "주한미군"]))
+        return df[mask].copy()
+    else:
+        return df[df["용도"] == usage_name].copy()
 
 # ─────────────────────────────────────────────────────────
 # 사이드바
@@ -186,11 +126,9 @@ with st.sidebar:
     st.subheader("🗺️ 지도 API 키")
     kakao_key = st.text_input("카카오 REST API 키", type="password", help="키가 없으면 대구 임의의 좌표로 매핑됩니다.")
 
-
 # ─────────────────────────────────────────────────────────
 # 본문 로직
 # ─────────────────────────────────────────────────────────
-
 df_csv = pd.DataFrame()
 
 if src_csv == "레포 파일 사용":
@@ -200,15 +138,12 @@ if src_csv == "레포 파일 사용":
     csv_list = []
     for p in all_csvs:
         try:
-            temp_df = pd.read_csv(p, encoding="utf-8-sig", thousands=',')
-            temp_df.columns = temp_df.columns.str.strip()
-            csv_list.append(temp_df)
+            with open(p, 'rb') as f:
+                temp_df = load_safe_csv(f.read())
+                if not temp_df.empty:
+                    csv_list.append(temp_df)
         except:
-            try: 
-                temp_df = pd.read_csv(p, encoding="cp949", thousands=',')
-                temp_df.columns = temp_df.columns.str.strip()
-                csv_list.append(temp_df)
-            except: pass
+            pass
     if csv_list: df_csv = pd.concat(csv_list, ignore_index=True)
 
 if df_csv.empty and 'merged_csv_df' in st.session_state:
@@ -217,8 +152,6 @@ if df_csv.empty and 'merged_csv_df' in st.session_state:
 if not df_csv.empty:
     if "사용량(mj)" in df_csv.columns: df_csv["사용량(mj)"] = df_csv["사용량(mj)"].apply(clean_korean_finance_number)
     if "사용량(m3)" in df_csv.columns: df_csv["사용량(m3)"] = df_csv["사용량(m3)"].apply(clean_korean_finance_number)
-        
-comments_db = load_comments_db()
         
 rpt_tabs = st.tabs(["열량 기준 (GJ)", "부피 기준 (천m³)"])
 
@@ -241,7 +174,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         
         df_csv_tab = df_csv.copy()
         if not df_csv_tab.empty:
-            # 🟢 GJ 강제 변환 (1000.0) 
             if unit_str == "GJ" and "사용량(mj)" in df_csv_tab.columns:
                 df_csv_tab["사용량(mj)"] = pd.to_numeric(df_csv_tab["사용량(mj)"], errors="coerce").fillna(0) / 1000.0
             elif unit_str == "천m³" and "사용량(m3)" in df_csv_tab.columns:
@@ -271,10 +203,10 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             df_csv_tab["연_csv"] = df_csv_tab["날짜_파싱"].dt.year
             df_csv_tab["월_csv"] = df_csv_tab["날짜_파싱"].dt.month
             
-            # 동적 연도 리스트 생성
-            avail_years = sorted(df_csv_tab["연_csv"].unique().tolist())
+            # 🟢 에러 방지: 데이터가 1개여도 안전하게 리스트로 감싸기
+            avail_years = sorted(list(set(df_csv_tab["연_csv"].dropna().tolist())))
             if avail_years:
-                years_available = avail_years
+                years_available = [int(y) for y in avail_years]
                 max_year = max(years_available)
                 max_month = df_csv_tab[df_csv_tab["연_csv"] == max_year]["월_csv"].max()
                 default_y_index = years_available.index(max_year) if max_year in years_available else len(years_available) - 1
@@ -287,25 +219,25 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             sel_month_str = st.selectbox("기준 월", [f"{m}월" for m in range(1, 13)], index=default_m_index, key=f"rpt_mo{key_sfx}")
         
         max_month = int(sel_month_str.replace("월", "")) 
-        report_db_key = f"{sel_year_rpt}_{max_month}M_{unit_str}_yoy_only"
-        
-        if report_db_key not in comments_db: comments_db[report_db_key] = {}
-        curr_db = comments_db[report_db_key]
         
         st.markdown("<hr style='margin: 10px 0 30px 0;'>", unsafe_allow_html=True)
 
         # ─────────────────────────────────────────────────────────
-        # 통합 분석 함수 (오직 CSV 데이터만 사용)
+        # 통합 분석 함수
         # ─────────────────────────────────────────────────────────
-        def render_full_usage_report(usage_name, section_num, key_sfx, db_key):
+        def render_full_usage_report(usage_name, section_num, key_sfx):
             st.markdown(f"""<div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;"><h4 style="margin: 0;">📈 {section_num}. 용도별 판매량 분석 : {usage_name}</h4></div>""", unsafe_allow_html=True)
             
             if df_csv_tab.empty or "용도" not in df_csv_tab.columns or val_col not in df_csv_tab.columns:
                 st.info("데이터가 부족하여 차트를 표시할 수 없습니다.")
                 return
 
-            # CSV에서 해당 용도 필터링
-            df_u = df_csv_tab[(df_csv_tab["용도"] == usage_name) & (df_csv_tab["월_csv"] <= max_month)]
+            df_u = get_usage_data(df_csv_tab, usage_name)
+            df_u = df_u[df_u["월_csv"] <= max_month]
+            
+            if df_u.empty:
+                st.warning(f"업로드된 데이터에 '{usage_name}' 데이터가 없습니다.")
+                return
             
             p_curr_act = df_u[df_u["연_csv"] == sel_year_rpt].groupby("월_csv")[val_col].sum()
             p_prev_act = df_u[df_u["연_csv"] == sel_year_rpt-1].groupby("월_csv")[val_col].sum()
@@ -359,6 +291,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
 
             # --- 3. 세부 업종별 판매량 비교 (그래프) ---
             grp_col = "업종"
+            if "업종분류" in df_u.columns and "업종" not in df_u.columns:
+                df_u["업종"] = df_u["업종분류"]
+                
             if grp_col in df_u.columns:
                 st.markdown(f"**■ 세부 업종별 판매량 비교 (당해연도 vs 전년도)**")
                 curr_ind_grp = df_u[df_u["연_csv"] == sel_year_rpt].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
@@ -367,14 +302,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 ind_comp_graph = pd.merge(curr_ind_grp, prev_ind_grp, on=grp_col, how="outer").fillna(0)
                 ind_comp_graph = ind_comp_graph.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                 
+                # 🟢 막대그래프에서 '기타' 삭제 (Top 10만)
                 if len(ind_comp_graph) > 10:
-                    top10_df = ind_comp_graph.iloc[:10].copy()
-                    others_df = ind_comp_graph.iloc[10:].copy()
-                    o_c = others_df[f"{sel_year_rpt}년"].sum()
-                    o_p = others_df[f"{sel_year_rpt-1}년"].sum()
-                    
-                    others_row = pd.DataFrame([{grp_col: "기타", f"{sel_year_rpt}년": o_c, f"{sel_year_rpt-1}년": o_p}])
-                    ind_comp_plot = pd.concat([top10_df, others_row], ignore_index=True)
+                    ind_comp_plot = ind_comp_graph.iloc[:10].copy()
                 else:
                     ind_comp_plot = ind_comp_graph.copy()
                         
@@ -391,12 +321,10 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 fig_ind.update_layout(barmode='group', xaxis_title="", yaxis_title=f"판매량({unit_str})", margin=dict(t=10, b=10, l=10, r=10), height=420, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                 st.plotly_chart(fig_ind, use_container_width=True)
 
-            # --- 4. 코멘트 작성란 ---
-            render_comment_section(f"📝 {usage_name} 세부 코멘트 작성", db_key, curr_db, comments_db, 100, f"{usage_name}의 월별 편차 원인 및 특이사항을 기록하세요.", f"{usage_name}_{key_sfx}")
             st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
 
             # =========================================================
-            # 5. 세부 업종별 비교표 (100% CSV 집계)
+            # 4. 세부 업종별 비교표
             # =========================================================
             if grp_col in df_u.columns:
                 st.markdown(f"**■ 🏢 {usage_name} 세부 업종별 비교표**")
@@ -413,25 +341,25 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     o_rate = (o_c / o_p * 100) if o_p > 0 else 0
                     
                     others_row = pd.DataFrame([{grp_col: "기타", f"{sel_year_rpt}년": o_c, f"{sel_year_rpt-1}년": o_p, "증감": o_diff, "대비(%)": o_rate}])
-                    ind_comp = pd.concat([top10_df, others_row], ignore_index=True)
+                    ind_comp_tbl = pd.concat([top10_df, others_row], ignore_index=True)
+                else:
+                    ind_comp_tbl = ind_comp.copy()
+                    ind_comp_tbl["증감"] = ind_comp_tbl[f"{sel_year_rpt}년"] - ind_comp_tbl[f"{sel_year_rpt-1}년"]
+                    ind_comp_tbl["대비(%)"] = np.where(ind_comp_tbl[f"{sel_year_rpt-1}년"] > 0, (ind_comp_tbl[f"{sel_year_rpt}년"] / ind_comp_tbl[f"{sel_year_rpt-1}년"]) * 100, 0)
                 
-                ind_comp["증감"] = ind_comp[f"{sel_year_rpt}년"] - ind_comp[f"{sel_year_rpt-1}년"]
-                ind_comp["대비(%)"] = np.where(ind_comp[f"{sel_year_rpt-1}년"] > 0, (ind_comp[f"{sel_year_rpt}년"] / ind_comp[f"{sel_year_rpt-1}년"]) * 100, 0)
-                
-                # 순수하게 CSV에서 집계된 값을 바탕으로 총계 생성
-                sum_curr_tbl = ind_comp[f"{sel_year_rpt}년"].sum()
-                sum_prev_tbl = ind_comp[f"{sel_year_rpt-1}년"].sum()
+                sum_curr_tbl = ind_comp_tbl[f"{sel_year_rpt}년"].sum()
+                sum_prev_tbl = ind_comp_tbl[f"{sel_year_rpt-1}년"].sum()
                 sum_diff_tbl = sum_curr_tbl - sum_prev_tbl
                 sum_rate_tbl = (sum_curr_tbl / sum_prev_tbl * 100) if sum_prev_tbl > 0 else 0
                 
                 sub_ind_row = pd.DataFrame([{grp_col: "💡 총계", f"{sel_year_rpt}년": sum_curr_tbl, f"{sel_year_rpt-1}년": sum_prev_tbl, "증감": sum_diff_tbl, "대비(%)": sum_rate_tbl}])
-                ind_comp = pd.concat([ind_comp, sub_ind_row], ignore_index=True)
+                ind_comp_tbl = pd.concat([ind_comp_tbl, sub_ind_row], ignore_index=True)
                 
-                st.dataframe(center_style(ind_comp.style.format({f"{sel_year_rpt}년": "{:,.0f}", f"{sel_year_rpt-1}년": "{:,.0f}", "증감": "{:,.0f}", "대비(%)": "{:,.1f}"}).apply(highlight_subtotal, axis=1)), use_container_width=True, hide_index=True)
+                st.dataframe(center_style(ind_comp_tbl.style.format({f"{sel_year_rpt}년": "{:,.0f}", f"{sel_year_rpt-1}년": "{:,.0f}", "증감": "{:,.0f}", "대비(%)": "{:,.1f}"}).apply(highlight_subtotal, axis=1)), use_container_width=True, hide_index=True)
                 st.markdown("<br>", unsafe_allow_html=True)
                 
                 # =========================================================
-                # 6. Top 30 리스트 (100% CSV 집계)
+                # 5. Top 30 리스트 
                 # =========================================================
                 st.markdown(f"**■ 🏆 {usage_name} Top 30 업체 List (당해연도 판매량 기준)**")
                 if "고객명" in df_u.columns:
@@ -439,6 +367,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     c_prev_all = df_u[df_u["연_csv"] == sel_year_rpt - 1].groupby(["고객명", grp_col], as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt-1}년"})
                     
                     grp_top = pd.merge(c_curr_all, c_prev_all, on=["고객명", grp_col], how="outer").fillna(0)
+                    
                     grp_top = grp_top.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                     grp_top = grp_top[(grp_top[f"{sel_year_rpt}년"] > 0) | (grp_top[f"{sel_year_rpt-1}년"] > 0)].reset_index(drop=True)
 
@@ -462,7 +391,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     st.markdown("<br>", unsafe_allow_html=True)
                     
                     # =========================================================
-                    # 7. 개별 고객 상세 차트
+                    # 6. 개별 고객 상세 차트
                     # =========================================================
                     st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트**")
                     top_customers = [c for c in grp_top["고객명"] if "💡" not in c]
@@ -503,11 +432,11 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             st.plotly_chart(fig_cust_mon, use_container_width=True)
 
         # ─────────────────────────────────────────────────────────
-        # 함수 실행 (업무용, 산업용 순서)
+        # 함수 실행 (🟢 1순위 산업용, 2순위 업무용)
         # ─────────────────────────────────────────────────────────
-        render_full_usage_report("업무용", "1", key_sfx, "biz")
+        render_full_usage_report("산업용", "1", key_sfx)
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
-        render_full_usage_report("산업용", "2", key_sfx, "ind")
+        render_full_usage_report("업무용", "2", key_sfx)
         
         # ─────────────────────────────────────────────────────────
         # 3. 이상 감지 업체 지도 모니터링
@@ -519,7 +448,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns and "용도" in df_csv_tab.columns:
             df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month].copy()
             
-            # 🟢 지도 툴팁을 위해 용도 컬럼을 포함하여 그룹화
             map_curr = df_map_base[df_map_base["연_csv"] == sel_year_rpt].groupby(["고객명", "도로명주소", "용도"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
             map_prev = df_map_base[df_map_base["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "도로명주소", "용도"], as_index=False)[val_col].sum().rename(columns={val_col: "전년도"})
             
@@ -541,7 +469,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     lats.append(lat)
                     lons.append(lon)
                     
-                    # 🟢 마우스 오버 시 툴팁에 [용도] 표시 적용 완료
                     info = f"<b>[{row['용도']}] {row['고객명']}</b><br/>"
                     info += f"전년: {row['전년도']:,.0f} / 당해: {row['당해년도']:,.0f}<br/>"
                     info += f"증감률: <span style='color:red; font-weight:bold;'>{row['증감률(%)']:.1f}%</span><br/>"
@@ -581,7 +508,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 else:
                     st.error("주소 좌표 변환에 실패하여 지도를 표시할 수 없습니다.")
         else:
-            st.info("데이터에 필요한 컬럼이 없거나 데이터가 부족하여 지도를 생성할 수 없습니다.")
+            st.info("데이터에 '도로명주소', '고객명', '용도' 컬럼이 없거나 데이터가 부족하여 지도를 생성할 수 없습니다.")
 
         # ─────────────────────────────────────────────────────────
         # 4. 보고서 출력
