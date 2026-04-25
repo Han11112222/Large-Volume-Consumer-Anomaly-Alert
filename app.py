@@ -1,8 +1,7 @@
 import io
-import os
 import random
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -11,7 +10,6 @@ import plotly.graph_objects as go
 import pydeck as pdk
 import requests
 import streamlit as st
-
 
 # ─────────────────────────────────────────────────────────
 # 기본 설정
@@ -87,14 +85,19 @@ def geocode_address(address: str, api_key: str = "") -> Tuple[float, float]:
     lon = 128.6014 + random.uniform(-0.06, 0.06)
     return lat, lon
 
+# 🟢 KeyError 원천 차단: 안전한 용도 필터링 로직
 def get_usage_data(df, usage_name):
-    if "상품명" not in df.columns:
-        df["상품명"] = ""
-    
+    if "용도" not in df.columns:
+        return pd.DataFrame()
+        
     if usage_name == "산업용":
         return df[df["용도"] == "산업용"]
     elif usage_name == "업무용":
-        return df[(df["용도"] == "업무용") | (df["상품명"].astype(str).str.replace(r"\s+", "", regex=True).isin(["냉난방용(업무)", "업무난방용", "주한미군"]))]
+        if "상품명" in df.columns:
+            mask = (df["용도"] == "업무용") | (df["상품명"].astype(str).str.replace(r"\s+", "", regex=True).isin(["냉난방용(업무)", "업무난방용", "주한미군"]))
+            return df[mask]
+        else:
+            return df[df["용도"] == "업무용"]
     else:
         return df[df["용도"] == usage_name]
 
@@ -161,7 +164,7 @@ rpt_tabs = st.tabs(["열량 기준 (GJ)", "부피 기준 (천m³)"])
 
 for idx, rpt_tab in enumerate(rpt_tabs):
     with rpt_tab:
-        # 🟢 단위와 기준 컬럼 세팅
+        # 🟢 단위 세팅 (명확히 GJ 표기)
         if idx == 0:
             unit_str = "GJ"
             val_col = "사용량(mj)"
@@ -180,7 +183,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         df_csv_tab = df_csv.copy()
         if not df_csv_tab.empty:
             
-            # 🟢 GJ 변환: MJ를 1000으로 나누기
+            # 🟢 GJ 변환: MJ를 1000으로 나누어 완벽한 GJ 수치로 만듦
             if unit_str == "GJ" and "사용량(mj)" in df_csv_tab.columns:
                 df_csv_tab["사용량(mj)"] = pd.to_numeric(df_csv_tab["사용량(mj)"], errors="coerce").fillna(0) / 1000.0
             elif unit_str == "천m³" and "사용량(m3)" in df_csv_tab.columns:
@@ -309,7 +312,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 ind_comp_graph = pd.merge(curr_ind_grp, prev_ind_grp, on=grp_col, how="outer").fillna(0)
                 ind_comp_graph = ind_comp_graph.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                 
-                # 🟢 차트 스케일 왜곡 방지: 막대그래프에서는 '기타'를 빼고 Top 10만 직관적으로 노출합니다.
+                # 🟢 막대그래프에서 '기타' 삭제하여 비율 왜곡 방지
                 if len(ind_comp_graph) > 10:
                     ind_comp_plot = ind_comp_graph.iloc[:10].copy()
                 else:
@@ -331,7 +334,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
 
             # =========================================================
-            # 5. 세부 업종별 비교표 
+            # 4. 세부 업종별 비교표 (표에는 '기타' 유지하여 총계 맞춤)
             # =========================================================
             if grp_col in df_u.columns:
                 st.markdown(f"**■ 🏢 {usage_name} 세부 업종별 비교표**")
@@ -339,7 +342,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 ind_comp = pd.merge(curr_ind_grp, prev_ind_grp, on=grp_col, how="outer").fillna(0)
                 ind_comp = ind_comp.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                 
-                # 🟢 표에는 전체 합계를 위해 '기타'를 남겨둡니다.
                 if len(ind_comp) > 10:
                     top10_df = ind_comp.iloc[:10].copy()
                     others_df = ind_comp.iloc[10:].copy()
@@ -366,7 +368,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 st.markdown("<br>", unsafe_allow_html=True)
                 
                 # =========================================================
-                # 6. Top 30 리스트
+                # 5. Top 30 리스트 
                 # =========================================================
                 st.markdown(f"**■ 🏆 {usage_name} Top 30 업체 List (당해연도 판매량 기준)**")
                 if "고객명" in df_u.columns:
@@ -398,7 +400,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     st.markdown("<br>", unsafe_allow_html=True)
                     
                     # =========================================================
-                    # 7. 개별 고객 상세 차트
+                    # 6. 개별 고객 상세 차트
                     # =========================================================
                     st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트**")
                     top_customers = [c for c in grp_top["고객명"] if "💡" not in c]
@@ -439,7 +441,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             st.plotly_chart(fig_cust_mon, use_container_width=True)
 
         # ─────────────────────────────────────────────────────────
-        # 함수 실행 (🟢 산업용 1번, 업무용 2번으로 순서 변경)
+        # 함수 실행 (🟢 1순위 산업용, 2순위 업무용)
         # ─────────────────────────────────────────────────────────
         render_full_usage_report("산업용", "1", key_sfx)
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
@@ -515,7 +517,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 else:
                     st.error("주소 좌표 변환에 실패하여 지도를 표시할 수 없습니다.")
         else:
-            st.info("데이터에 필요한 컬럼이 없거나 데이터가 부족하여 지도를 생성할 수 없습니다.")
+            st.info("데이터에 '도로명주소', '고객명', '용도' 컬럼이 없거나 데이터가 부족하여 지도를 생성할 수 없습니다.")
 
         # ─────────────────────────────────────────────────────────
         # 4. 보고서 출력
