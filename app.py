@@ -405,14 +405,14 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             df_csv_tab["연_csv"] = df_csv_tab["날짜_파싱"].dt.year
             df_csv_tab["월_csv"] = df_csv_tab["날짜_파싱"].dt.month
         
-        # 🟢 핵심 추가: 기간 집계 기준 (누적/당월) 버튼
+        # 🟢 당월 실적이 먼저 오도록 순서 변경 완료
         c_y, c_m, c_agg, c_empty = st.columns([1, 1, 2, 1])
         with c_y:
             sel_year_rpt = st.selectbox("기준 연도", years_available, index=default_y_index, key=f"rpt_yr{key_sfx}")
         with c_m:
             sel_month_str = st.selectbox("기준 월", [f"{m}월" for m in range(1, 13)], index=default_m_index, key=f"rpt_mo{key_sfx}")
         with c_agg:
-            agg_mode = st.radio("집계 기준", ["누적 실적 (1월~당월)", "당월 실적"], index=0, horizontal=True, key=f"agg_mode_{key_sfx}")
+            agg_mode = st.radio("집계 기준", ["당월 실적", "누적 실적 (1월~당월)"], index=0, horizontal=True, key=f"agg_mode_{key_sfx}")
         
         max_month = int(sel_month_str.replace("월", "")) 
         report_db_key = f"{sel_year_rpt}_{max_month}M_{unit_str}_yoy_only"
@@ -436,7 +436,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 p_curr_act = df_u[(df_u["연"] == sel_year_rpt) & (df_u["계획/실적"] == "실적")].groupby("월")["값"].sum()
                 p_prev_act = df_u[(df_u["연"] == sel_year_rpt-1) & (df_u["계획/실적"] == "실적")].groupby("월")["값"].sum()
                 
-                # 🟢 누적/당월 조건 처리 (요약 텍스트용)
                 if agg_mode == "누적 실적 (1월~당월)":
                     sum_act = p_curr_act.sum()
                     sum_prev = p_prev_act.sum()
@@ -454,7 +453,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 
                 col_c, col_m = st.columns([1, 2.5])
                 with col_c:
-                    st.markdown(top_title) # 동적 텍스트 적용
+                    st.markdown(top_title) 
                     st.markdown(
                         f"""
                         <div style="background-color: #e2e8f0; border-left: 5px solid #1e3a8a; padding: 10px 10px; margin-bottom: 0px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
@@ -489,7 +488,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 else:
                     csv_products = pd.Series([""] * len(df_csv_tab))
                 
-                # 🟢 누적/당월 조건 처리 (세부 업종 필터링용)
                 if agg_mode == "누적 실적 (1월~당월)":
                     month_mask = (df_csv_tab["월_csv"] <= max_month)
                 else:
@@ -601,7 +599,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     st.dataframe(center_style(grp_top_show.style.format({f"{sel_year_rpt}년": "{:,.0f}", f"{sel_year_rpt-1}년": "{:,.0f}", "증감": "{:,.0f}", "대비(%)": "{:,.1f}"}).apply(highlight_subtotal, axis=1)), use_container_width=True, hide_index=True)
                     st.markdown("<br>", unsafe_allow_html=True)
                     
-                    # 🟢 누적/당월 조건 처리 (개별 고객 상세 차트용)
                     st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트**")
                     top_customers = [c for c in grp_top["고객명"] if "💡" not in c]
                     sel_cust = st.selectbox(f"상세 분석할 고객명을 선택하세요 ({usage_name})", ["선택 안함"] + top_customers, key=f"sel_cust_{usage_name}_{key_sfx}")
@@ -668,7 +665,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         </div>
         """, unsafe_allow_html=True)
         
-        # 🟢 지도 위 버튼 추가 (테마 선택 추가)
         map_c1, map_c2 = st.columns(2)
         with map_c1:
             map_usage = st.radio("📍 지도에 표시할 용도 선택", ["산업용", "업무용"], index=0, horizontal=True, key=f"map_radio_{key_sfx}")
@@ -678,7 +674,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         deck_map_style = "dark" if map_style_ui == "다크 모드 (기본)" else "road"
         
         if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns and "용도" in df_csv_tab.columns:
-            # 🟢 누적/당월 조건 처리 (지도용 데이터 필터)
             if agg_mode == "누적 실적 (1월~당월)":
                 df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month].copy()
             else:
@@ -722,6 +717,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             
                             rate = row['증감률(%)']
                             
+                            # 🟢 5~10% (주의 단계) 가시성 상향 조치
                             if map_usage == "산업용":
                                 if rate <= -20:
                                     level = "심각"
@@ -733,8 +729,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                     radiuses.append(100)
                                 else:
                                     level = "주의"
-                                    colors.append([255, 180, 180, 150]) 
-                                    radiuses.append(60)
+                                    colors.append([255, 150, 150, 200]) 
+                                    radiuses.append(80)
                             else: 
                                 if rate <= -20:
                                     level = "심각"
@@ -746,8 +742,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                     radiuses.append(100)
                                 else:
                                     level = "주의"
-                                    colors.append([180, 220, 255, 150]) 
-                                    radiuses.append(60)
+                                    colors.append([120, 180, 255, 200]) 
+                                    radiuses.append(80)
                             
                             info = f"<b>{row['용도_태그']} {row['고객명']} <span style='color:red;'>[{level}]</span></b><br/>"
                             info += f"전년: {row['전년도']:,.0f} / 당해: {row['당해년도']:,.0f}<br/>"
@@ -786,7 +782,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             )
                             
                             r = pdk.Deck(
-                                map_style=deck_map_style, # 🟢 선택된 지도 테마 적용
+                                map_style=deck_map_style, 
                                 layers=[layer],
                                 initial_view_state=view_state,
                                 tooltip={"html": "{tooltip}", "style": {"backgroundColor": "white", "color": "black", "font-family": "NanumGothic"}}
