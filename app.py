@@ -464,7 +464,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                         """, unsafe_allow_html=True
                     )
                     fig_c = go.Figure()
-                    fig_c.add_trace(go.Bar(x=[f"{sel_year_rpt}년<br>실적", f"{sel_year_rpt-1}년<br>실적"], y=[sum_act, sum_prev], marker_color=[COLOR_ACT, COLOR_PREV], text=[f"{sum_act:,.0f}", f"{sum_prev:,.0f}"], textposition='auto', textfont=dict(size=14)))
+                    # 🟢 전년(과거)이 무조건 왼쪽, 당해(현재)가 오른쪽 오도록 렌더링
+                    fig_c.add_trace(go.Bar(x=[f"{sel_year_rpt-1}년<br>실적", f"{sel_year_rpt}년<br>실적"], y=[sum_prev, sum_act], marker_color=[COLOR_PREV, COLOR_ACT], text=[f"{sum_prev:,.0f}", f"{sum_act:,.0f}"], textposition='auto', textfont=dict(size=14)))
                     fig_c.update_layout(margin=dict(t=25, b=10, l=10, r=10), height=420, showlegend=False)
                     st.plotly_chart(fig_c, use_container_width=True)
                     
@@ -474,8 +475,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     fig_m = go.Figure()
                     vals_act = [p_curr_act.get(m, 0) for m in months_list]
                     vals_prev = [p_prev_act.get(m, 0) for m in months_list]
-                    fig_m.add_trace(go.Bar(x=months_list, y=vals_act, name=f'{sel_year_rpt}년 실적', marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in vals_act], textposition='auto', textfont=dict(size=11)))
+                    # 🟢 전년(과거) 범례가 먼저 오도록 렌더링
                     fig_m.add_trace(go.Bar(x=months_list, y=vals_prev, name=f'{sel_year_rpt-1}년 실적', marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in vals_prev], textposition='auto', textfont=dict(size=11)))
+                    fig_m.add_trace(go.Bar(x=months_list, y=vals_act, name=f'{sel_year_rpt}년 실적', marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in vals_act], textposition='auto', textfont=dict(size=11)))
                     fig_m.update_layout(barmode='group', xaxis=dict(tickmode='linear', tick0=1, dtick=1), xaxis_title="월", yaxis_title=f"판매량({unit_str})", margin=dict(t=10, b=10, l=10, r=10), height=420, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                     st.plotly_chart(fig_m, use_container_width=True)
 
@@ -506,7 +508,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     curr_ind_grp = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
                     prev_ind_grp = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt - 1].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt-1}년"})
                     
-                    ind_comp_graph = pd.merge(curr_ind_grp, prev_ind_grp, on=grp_col, how="outer").fillna(0)
+                    # 🟢 전년(과거) 컬럼이 왼쪽, 당해(현재) 컬럼이 오른쪽 오도록 outer merge 순서 변경
+                    ind_comp_graph = pd.merge(prev_ind_grp, curr_ind_grp, on=grp_col, how="outer").fillna(0)
                     ind_comp_graph = ind_comp_graph.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                     
                     if len(ind_comp_graph) > 10:
@@ -514,7 +517,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                         others_df = ind_comp_graph.iloc[10:].copy()
                         o_c = others_df[f"{sel_year_rpt}년"].sum()
                         o_p = others_df[f"{sel_year_rpt-1}년"].sum()
-                        others_row = pd.DataFrame([{grp_col: "기타", f"{sel_year_rpt}년": o_c, f"{sel_year_rpt-1}년": o_p}])
+                        others_row = pd.DataFrame([{grp_col: "기타", f"{sel_year_rpt-1}년": o_p, f"{sel_year_rpt}년": o_c}])
                         ind_comp_plot = pd.concat([top10_df, others_row], ignore_index=True)
                     else:
                         ind_comp_plot = ind_comp_graph.copy()
@@ -526,8 +529,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     if pd.notna(max_diff_idx): colors_act[int(max_diff_idx)] = "#d32f2f" 
                         
                     fig_ind = go.Figure()
-                    fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[f"{sel_year_rpt}년"], name=f'{sel_year_rpt}년', marker_color=colors_act, text=[f"{v:,.0f}" if v>0 else "" for v in ind_comp_plot[f"{sel_year_rpt}년"]], textposition='auto', textfont=dict(size=11)))
+                    # 🟢 전년(과거) 바가 왼쪽에 먼저 오도록 렌더링
                     fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[f"{sel_year_rpt-1}년"], name=f'{sel_year_rpt-1}년', marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in ind_comp_plot[f"{sel_year_rpt-1}년"]], textposition='auto', textfont=dict(size=11)))
+                    fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[f"{sel_year_rpt}년"], name=f'{sel_year_rpt}년', marker_color=colors_act, text=[f"{v:,.0f}" if v>0 else "" for v in ind_comp_plot[f"{sel_year_rpt}년"]], textposition='auto', textfont=dict(size=11)))
                     
                     fig_ind.update_layout(barmode='group', xaxis_title="", yaxis_title=f"판매량({unit_str})", margin=dict(t=10, b=10, l=10, r=10), height=420, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                     st.plotly_chart(fig_ind, use_container_width=True)
@@ -541,7 +545,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 
                 st.markdown(f"**■ 🏢 {usage_name} 세부 업종별 비교표**")
                 
-                ind_comp = pd.merge(curr_ind_grp, prev_ind_grp, on=grp_col, how="outer").fillna(0)
+                # 🟢 전년도(과거) 컬럼이 왼쪽, 당해년도(현재) 컬럼이 오른쪽 오도록
+                ind_comp = pd.merge(prev_ind_grp, curr_ind_grp, on=grp_col, how="outer").fillna(0)
                 ind_comp = ind_comp.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                 
                 if len(ind_comp) > 10:
@@ -552,7 +557,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     o_diff = o_c - o_p
                     o_rate = (o_c / o_p * 100) if o_p > 0 else 0
                     
-                    others_row = pd.DataFrame([{grp_col: "기타", f"{sel_year_rpt}년": o_c, f"{sel_year_rpt-1}년": o_p, "증감": o_diff, "대비(%)": o_rate}])
+                    others_row = pd.DataFrame([{grp_col: "기타", f"{sel_year_rpt-1}년": o_p, f"{sel_year_rpt}년": o_c, "증감": o_diff, "대비(%)": o_rate}])
                     ind_comp = pd.concat([top10_df, others_row], ignore_index=True)
                 
                 ind_comp["증감"] = ind_comp[f"{sel_year_rpt}년"] - ind_comp[f"{sel_year_rpt-1}년"]
@@ -563,10 +568,10 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 sum_diff = sum_curr - sum_prev
                 sum_rate = (sum_curr / sum_prev * 100) if sum_prev > 0 else 0
                 
-                sub_ind_row = pd.DataFrame([{grp_col: "💡 총계", f"{sel_year_rpt}년": sum_curr, f"{sel_year_rpt-1}년": sum_prev, "증감": sum_diff, "대비(%)": sum_rate}])
+                sub_ind_row = pd.DataFrame([{grp_col: "💡 총계", f"{sel_year_rpt-1}년": sum_prev, f"{sel_year_rpt}년": sum_curr, "증감": sum_diff, "대비(%)": sum_rate}])
                 ind_comp = pd.concat([ind_comp, sub_ind_row], ignore_index=True)
                 
-                st.dataframe(center_style(ind_comp.style.format({f"{sel_year_rpt}년": "{:,.0f}", f"{sel_year_rpt-1}년": "{:,.0f}", "증감": "{:,.0f}", "대비(%)": "{:,.1f}"}).apply(highlight_subtotal, axis=1)), use_container_width=True, hide_index=True)
+                st.dataframe(center_style(ind_comp.style.format({f"{sel_year_rpt-1}년": "{:,.0f}", f"{sel_year_rpt}년": "{:,.0f}", "증감": "{:,.0f}", "대비(%)": "{:,.1f}"}).apply(highlight_subtotal, axis=1)), use_container_width=True, hide_index=True)
                 st.markdown("<br>", unsafe_allow_html=True)
                 
                 st.markdown(f"**■ 🏆 {usage_name} Top 30 업체 List (당해연도 판매량 기준)**")
@@ -574,7 +579,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     c_curr_all = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt].groupby(["고객명", grp_col], as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
                     c_prev_all = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt - 1].groupby(["고객명", grp_col], as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt-1}년"})
                     
-                    grp_top = pd.merge(c_curr_all, c_prev_all, on=["고객명", grp_col], how="outer").fillna(0)
+                    # 🟢 전년도(과거) 컬럼이 왼쪽, 당해년도(현재) 컬럼이 오른쪽 오도록
+                    grp_top = pd.merge(c_prev_all, c_curr_all, on=["고객명", grp_col], how="outer").fillna(0)
                     grp_top = grp_top.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
                     
                     grp_top = grp_top[(grp_top[f"{sel_year_rpt}년"] > 0) | (grp_top[f"{sel_year_rpt-1}년"] > 0)].reset_index(drop=True)
@@ -589,13 +595,13 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     top30_rate = (top30_sum_curr / top30_sum_prev * 100) if top30_sum_prev > 0 else 0
                     top30_ratio = (top30_sum_curr / sum_curr * 100) if sum_curr > 0 else 0
                     
-                    subtotal_row = pd.DataFrame([{"고객명": "💡 소계 (Top 30)", grp_col: f"전체대비 {top30_ratio:.1f}%", f"{sel_year_rpt}년": top30_sum_curr, f"{sel_year_rpt-1}년": top30_sum_prev, "증감": top30_diff, "대비(%)": top30_rate}])
+                    subtotal_row = pd.DataFrame([{"고객명": "💡 소계 (Top 30)", grp_col: f"전체대비 {top30_ratio:.1f}%", f"{sel_year_rpt-1}년": top30_sum_prev, f"{sel_year_rpt}년": top30_sum_curr, "증감": top30_diff, "대비(%)": top30_rate}])
                     grp_top_show = pd.concat([grp_top_30, subtotal_row], ignore_index=True)
                     
                     ranks = list(range(1, len(grp_top_30) + 1)) + ["-"]
                     grp_top_show.insert(0, "순위", ranks)
                     
-                    st.dataframe(center_style(grp_top_show.style.format({f"{sel_year_rpt}년": "{:,.0f}", f"{sel_year_rpt-1}년": "{:,.0f}", "증감": "{:,.0f}", "대비(%)": "{:,.1f}"}).apply(highlight_subtotal, axis=1)), use_container_width=True, hide_index=True)
+                    st.dataframe(center_style(grp_top_show.style.format({f"{sel_year_rpt-1}년": "{:,.0f}", f"{sel_year_rpt}년": "{:,.0f}", "증감": "{:,.0f}", "대비(%)": "{:,.1f}"}).apply(highlight_subtotal, axis=1)), use_container_width=True, hide_index=True)
                     st.markdown("<br>", unsafe_allow_html=True)
                     
                     st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트**")
@@ -626,7 +632,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                         cc1, cc2 = st.columns([1, 2])
                         with cc1:
                             fig_cust_cum = go.Figure()
-                            fig_cust_cum.add_trace(go.Bar(x=[f"{sel_year_rpt}년", f"{sel_year_rpt-1}년"], y=[sum_cur_c, sum_prev_c], marker_color=[COLOR_ACT, COLOR_PREV], text=[f"{sum_cur_c:,.0f}", f"{sum_prev_c:,.0f}"], textposition='auto'))
+                            # 🟢 전년(과거) 바가 왼쪽에 먼저 오도록 렌더링
+                            fig_cust_cum.add_trace(go.Bar(x=[f"{sel_year_rpt-1}년", f"{sel_year_rpt}년"], y=[sum_prev_c, sum_cur_c], marker_color=[COLOR_PREV, COLOR_ACT], text=[f"{sum_prev_c:,.0f}", f"{sum_cur_c:,.0f}"], textposition='auto'))
                             fig_cust_cum.add_annotation(x=0.5, y=1.05, xref="paper", yref="paper", text=f"<b>{yoy_text}</b>", showarrow=False, font=dict(size=13, color="#d32f2f" if diff_val < 0 else "#1f77b4"), bgcolor="#f8f9fa", bordercolor="#d0d7e5", borderwidth=1, borderpad=4)
                             fig_cust_cum.update_layout(title=chart_title, margin=dict(t=50,b=10,l=10,r=10), height=350)
                             st.plotly_chart(fig_cust_cum, use_container_width=True)
@@ -637,8 +644,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             cur_vals = [y_cur[y_cur['월_csv']==m][val_col].sum() for m in months_c]
                             prev_vals = [y_prev[y_prev['월_csv']==m][val_col].sum() for m in months_c]
                             
-                            fig_cust_mon.add_trace(go.Bar(x=months_c, y=cur_vals, name=f"{sel_year_rpt}년", marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in cur_vals], textposition='auto', textfont=dict(size=11)))
+                            # 🟢 전년(과거) 범례가 먼저 오도록 렌더링
                             fig_cust_mon.add_trace(go.Bar(x=months_c, y=prev_vals, name=f"{sel_year_rpt-1}년", marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in prev_vals], textposition='auto', textfont=dict(size=11)))
+                            fig_cust_mon.add_trace(go.Bar(x=months_c, y=cur_vals, name=f"{sel_year_rpt}년", marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in cur_vals], textposition='auto', textfont=dict(size=11)))
                             
                             fig_cust_mon.update_layout(title=f"'{sel_cust}' 월별 사용량 추이", barmode='group', xaxis=dict(tickmode='linear', tick0=1, dtick=1), margin=dict(t=50,b=10,l=10,r=10), height=350, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                             st.plotly_chart(fig_cust_mon, use_container_width=True)
@@ -787,7 +795,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             )
                             st.pydeck_chart(r)
                             
-                            # 🟢 요약표: 순위, 비고, 총계 행 완벽 구현
                             st.markdown("<br><b>📋 지도 표기 업체 요약표</b>", unsafe_allow_html=True)
                             show_cols = ['용도_태그', '고객명', '도로명주소', '전년도', '당해년도', '증감률(%)']
                             df_show = alarm_df[show_cols].copy()
