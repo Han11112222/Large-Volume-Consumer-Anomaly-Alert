@@ -484,7 +484,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     max_diff_idx = ind_comp_plot["증감절대값"].idxmax()
                     
                     colors_act = [COLOR_ACT] * len(ind_comp_plot)
-                    if pd.notna(max_diff_idx): colors_act[max_diff_idx] = "#d32f2f" 
+                    if pd.notna(max_diff_idx): colors_act[int(max_diff_idx)] = "#d32f2f" 
                         
                     fig_ind = go.Figure()
                     fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[f"{sel_year_rpt}년"], name=f'{sel_year_rpt}년', marker_color=colors_act, text=[f"{v:,.0f}" if v>0 else "" for v in ind_comp_plot[f"{sel_year_rpt}년"]], textposition='auto', textfont=dict(size=11)))
@@ -604,7 +604,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             st.plotly_chart(fig_cust_mon, use_container_width=True)
 
         # ─────────────────────────────────────────────────────────
-        # 함수 실행 (🟢 순서 변경: 1. 산업용 / 2. 업무용)
+        # 함수 실행 (🟢 산업용 1번, 업무용 2번)
         # ─────────────────────────────────────────────────────────
         render_full_usage_report("산업용", "1", key_sfx, "ind")
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
@@ -617,6 +617,17 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("### 🗺️ 3. 대용량 수요처 이상 감지 모니터링 지도")
         st.caption("※ YoY 기준 5% 이상 사용량이 하락한 업체를 지도에 마커로 표시하여 현장 방문을 유도합니다.")
         
+        # 🟢 추가된 3단계 구분 안내 설명
+        st.markdown("""
+        <div style='background-color: #f1f3f5; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-size: 14px;'>
+            <b>💡 지도 마커(알람) 3단계 구분 안내</b><br>
+            • <b>심각 (20% 이상 하락)</b> : 가장 크고 진한 색상의 마커<br>
+            • <b>경계 (10% 이상 하락)</b> : 중간 크기와 중간 농도의 마커<br>
+            • <b>주의 (5% 이상 하락)</b> : 작고 연한 색상의 마커<br>
+            <span style='font-size: 12px; color: #555;'>※ 산업용은 붉은색(🔴), 업무용은 푸른색(🔵) 계열로 표시됩니다.</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
         # 🟢 지도 위 활성화 버튼 (라디오 버튼) 추가
         map_usage = st.radio("📍 지도에 표시할 용도 선택", ["산업용", "업무용"], index=0, horizontal=True, key=f"map_radio_{key_sfx}")
         
@@ -624,10 +635,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month].copy()
             
             if not df_map_base.empty:
-                # 🟢 선택한 용도에 맞게 정확한 필터링 (기타를 업무용에 정상 흡수)
                 if map_usage == "산업용":
                     df_map_filtered = df_map_base[df_map_base["용도"] == "산업용"].copy()
-                else: # 업무용
+                else: 
                     if "상품명" in df_map_base.columns:
                         prod_s = df_map_base["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
                         mask = (df_map_base["용도"] == "업무용") | (prod_s.isin(["냉난방용(업무)", "업무난방용", "주한미군"]))
@@ -644,8 +654,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소", "용도_태그"], how="inner").fillna(0)
                     
                     df_map_merged["증감률(%)"] = np.where(df_map_merged["전년도"] > 0, ((df_map_merged["당해년도"] - df_map_merged["전년도"]) / df_map_merged["전년도"]) * 100, 0)
-                    
-                    # 🟢 5% 이상 하락(증감률 <= -5) 기준 적용
                     alarm_df = df_map_merged[df_map_merged["증감률(%)"] <= -5].copy()
                     
                     if alarm_df.empty:
@@ -653,7 +661,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     else:
                         st.warning(f"🚨 총 **{len(alarm_df)}**개의 {map_usage} 업체에서 5% 이상 하락 신호가 감지되었습니다. (지도에는 하락폭이 큰 주요 100개 업체를 표시합니다.)")
                         
-                        # 🟢 하락폭 기준 주요 업체 100개만 필터링
                         alarm_df["감소량"] = alarm_df["전년도"] - alarm_df["당해년도"]
                         alarm_df = alarm_df.sort_values(by="감소량", ascending=False).head(100).reset_index(drop=True)
                         
@@ -665,32 +672,31 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             
                             rate = row['증감률(%)']
                             
-                            # 🟢 심각(20%), 경계(10%), 주의(5%) 3단계 차등 색상/크기 적용
                             if map_usage == "산업용":
                                 if rate <= -20:
                                     level = "심각"
-                                    colors.append([180, 0, 0, 255]) # 진한 빨강
+                                    colors.append([180, 0, 0, 255]) 
                                     radiuses.append(350)
                                 elif rate <= -10:
                                     level = "경계"
-                                    colors.append([255, 80, 80, 200]) # 중간 빨강
+                                    colors.append([255, 80, 80, 200]) 
                                     radiuses.append(200)
                                 else:
                                     level = "주의"
-                                    colors.append([255, 180, 180, 150]) # 연한 빨강
+                                    colors.append([255, 180, 180, 150]) 
                                     radiuses.append(100)
-                            else: # 업무용
+                            else: 
                                 if rate <= -20:
                                     level = "심각"
-                                    colors.append([0, 0, 180, 255]) # 진한 파랑
+                                    colors.append([0, 0, 180, 255]) 
                                     radiuses.append(350)
                                 elif rate <= -10:
                                     level = "경계"
-                                    colors.append([80, 150, 255, 200]) # 중간 파랑
+                                    colors.append([80, 150, 255, 200]) 
                                     radiuses.append(200)
                                 else:
                                     level = "주의"
-                                    colors.append([180, 220, 255, 150]) # 연한 파랑
+                                    colors.append([180, 220, 255, 150]) 
                                     radiuses.append(100)
                             
                             info = f"<b>{row['용도_태그']} {row['고객명']} <span style='color:red;'>[{level}]</span></b><br/>"
@@ -711,8 +717,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                 "ScatterplotLayer",
                                 data=alarm_df,
                                 get_position='[lon, lat]',
-                                get_color='color',     # 🟢 3단계 차등 색상
-                                get_radius='radius',   # 🟢 3단계 차등 크기
+                                get_color='color',     
+                                get_radius='radius',   
                                 pickable=True,
                                 opacity=0.8,
                                 filled=True,
@@ -732,7 +738,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             )
                             st.pydeck_chart(r)
                             
-                            # 🟢 [추가] 요약 표 출력
                             st.markdown("<br><b>📋 지도 표기 업체 요약표</b>", unsafe_allow_html=True)
                             show_cols = ['용도_태그', '고객명', '도로명주소', '전년도', '당해년도', '증감률(%)']
                             df_show = alarm_df[show_cols].copy()
