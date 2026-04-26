@@ -405,7 +405,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             df_csv_tab["연_csv"] = df_csv_tab["날짜_파싱"].dt.year
             df_csv_tab["월_csv"] = df_csv_tab["날짜_파싱"].dt.month
         
-        # 🟢 당월 실적이 먼저 오도록 순서 변경 완료
         c_y, c_m, c_agg, c_empty = st.columns([1, 1, 2, 1])
         with c_y:
             sel_year_rpt = st.selectbox("기준 연도", years_available, index=default_y_index, key=f"rpt_yr{key_sfx}")
@@ -717,7 +716,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             
                             rate = row['증감률(%)']
                             
-                            # 🟢 5~10% (주의 단계) 가시성 상향 조치
                             if map_usage == "산업용":
                                 if rate <= -20:
                                     level = "심각"
@@ -789,10 +787,35 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             )
                             st.pydeck_chart(r)
                             
+                            # 🟢 요약표: 순위, 비고, 총계 행 완벽 구현
                             st.markdown("<br><b>📋 지도 표기 업체 요약표</b>", unsafe_allow_html=True)
                             show_cols = ['용도_태그', '고객명', '도로명주소', '전년도', '당해년도', '증감률(%)']
                             df_show = alarm_df[show_cols].copy()
-                            st.dataframe(center_style(df_show.style.format({"전년도": "{:,.0f}", "당해년도": "{:,.0f}", "증감률(%)": "{:,.1f}"})), use_container_width=True, hide_index=True)
+                            
+                            df_show.insert(0, "No.", range(1, len(df_show) + 1))
+                            df_show["비고"] = np.where(df_show["증감률(%)"] <= -99.9, "폐업의심", "")
+                            
+                            sum_prev = df_show["전년도"].sum()
+                            sum_curr = df_show["당해년도"].sum()
+                            sum_rate = ((sum_curr - sum_prev) / sum_prev * 100) if sum_prev > 0 else 0
+                            
+                            total_row = pd.DataFrame([{
+                                "No.": "",
+                                "용도_태그": "💡 총계",
+                                "고객명": "",
+                                "도로명주소": "",
+                                "전년도": sum_prev,
+                                "당해년도": sum_curr,
+                                "증감률(%)": sum_rate,
+                                "비고": ""
+                            }])
+                            df_show = pd.concat([df_show, total_row], ignore_index=True)
+                            
+                            def highlight_map_total(s):
+                                is_total = s.astype(str).str.contains('💡 총계')
+                                return ['background-color: #e0e2e6; font-weight: bold;' if is_total.any() else '' for _ in s]
+                                
+                            st.dataframe(center_style(df_show.style.format({"전년도": "{:,.0f}", "당해년도": "{:,.0f}", "증감률(%)": "{:,.1f}"}).apply(highlight_map_total, axis=1)), use_container_width=True, hide_index=True)
                         else:
                             st.error("매핑된 위경도 좌표가 없어 지도를 표시할 수 없습니다.")
                 else:
