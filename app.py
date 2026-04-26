@@ -217,23 +217,20 @@ def load_safe_csv(file_bytes) -> pd.DataFrame:
             pass
     return pd.DataFrame()
 
-# 🟢 핵심 수정: 카카오 API 대신 형님이 업로드한 CSV 파일에서 좌표를 지능적으로 찾아옵니다.
 def get_coord_from_df(address: str, coord_df: pd.DataFrame) -> Tuple[float, float]:
     if pd.isna(address) or not str(address).strip():
         return None, None
         
     if not coord_df.empty and len(coord_df.columns) >= 3:
-        # 원본 주소에서 괄호() 및 쉼표(,) 뒷부분(상가명 등) 제거
         clean_addr = re.sub(r'\(.*?\)', '', str(address))
         clean_addr = clean_addr.split(',')[0].strip()
         clean_addr_no_space = clean_addr.replace(" ", "")
         
         if clean_addr_no_space:
-            addr_col = coord_df.columns[0] # 첫번째 컬럼 (주소)
-            lat_col = coord_df.columns[1]  # 두번째 컬럼 (위도)
-            lon_col = coord_df.columns[2]  # 세번째 컬럼 (경도)
+            addr_col = coord_df.columns[0]
+            lat_col = coord_df.columns[1]
+            lon_col = coord_df.columns[2]
             
-            # 띄어쓰기 무시하고 유연하게 검색
             coord_addrs = coord_df[addr_col].astype(str).str.replace(" ", "", regex=False)
             mask = coord_addrs.str.contains(re.escape(clean_addr_no_space), na=False)
             match = coord_df[mask]
@@ -244,7 +241,6 @@ def get_coord_from_df(address: str, coord_df: pd.DataFrame) -> Tuple[float, floa
                 except:
                     pass
                     
-    # 매핑 실패 시 대구 임의 좌표 반환
     lat = 35.8714 + random.uniform(-0.06, 0.06)
     lon = 128.6014 + random.uniform(-0.06, 0.06)
     return lat, lon
@@ -285,12 +281,29 @@ with st.sidebar:
             if 'merged_csv_df' in st.session_state: del st.session_state['merged_csv_df']
 
     st.markdown("---")
-    # 🟢 핵심 수정: 카카오 API를 빼고 위경도 맵핑 CSV 업로드 칸으로 대체
+    # 🟢 핵심 수정: 깃허브 기본값 및 수동 업로드 라디오 버튼 적용
     st.subheader("🗺️ 3. 지도 위경도 데이터 (CSV)")
-    up_coord = st.file_uploader("위경도 매핑 파일 업로드 (address_with_latlon.csv)", type=["csv"], key="coord_uploader")
+    src_coord = st.radio("위경도 데이터 소스", ["레포 파일(깃허브) 사용", "CSV 업로드(.csv)"], index=0, key="coord_src")
+    
     coord_df = pd.DataFrame()
-    if up_coord:
-        coord_df = load_safe_csv(up_coord.getvalue())
+    if src_coord == "CSV 업로드(.csv)":
+        up_coord = st.file_uploader("위경도 매핑 파일 업로드 (address_with_latlon.csv)", type=["csv"], key="coord_uploader")
+        if up_coord:
+            coord_df = load_safe_csv(up_coord.getvalue())
+    else:
+        # 깃허브 레포지토리 내의 파일 직접 참조 (우선)
+        coord_path = Path(__file__).parent / "address_with_latlon.csv"
+        if coord_path.exists():
+            coord_df = load_safe_csv(coord_path.read_bytes())
+        else:
+            # 안전장치: raw URL을 통한 통신 호출
+            github_csv_url = "https://raw.githubusercontent.com/Han11112222/quarterly-sales-report/main/address_with_latlon.csv"
+            try:
+                res = requests.get(github_csv_url, timeout=5)
+                if res.status_code == 200:
+                    coord_df = load_safe_csv(res.content)
+            except:
+                pass
 
 
 # ─────────────────────────────────────────────────────────
@@ -666,7 +679,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     else:
                         st.warning(f"🚨 총 **{len(alarm_df)}**개의 {map_usage} 업체에서 5% 이상 하락 신호가 감지되었습니다. (지도에는 하락폭이 큰 주요 100개 업체를 표시합니다.)")
                         
-                        # 🟢 엑셀(CSV) 위경도 매핑 로직 적용 (카카오 API 대신 사용)
                         alarm_df["감소량"] = alarm_df["전년도"] - alarm_df["당해년도"]
                         alarm_df = alarm_df.sort_values(by="감소량", ascending=False).head(100).reset_index(drop=True)
                         
