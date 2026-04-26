@@ -217,34 +217,34 @@ def load_safe_csv(file_bytes) -> pd.DataFrame:
             pass
     return pd.DataFrame()
 
-# 🟢 핵심 수정: 카카오가 잘 알아듣게 주소 정제 (기타 로직은 절대 건드리지 않음)
-@st.cache_data(show_spinner=False)
-def geocode_address(address: str, api_key: str = "") -> Tuple[float, float]:
+# 🟢 핵심 수정: 카카오 API 대신 형님이 업로드한 CSV 파일에서 좌표를 지능적으로 찾아옵니다.
+def get_coord_from_df(address: str, coord_df: pd.DataFrame) -> Tuple[float, float]:
     if pd.isna(address) or not str(address).strip():
         return None, None
-    
-    if api_key and api_key.strip():
-        # 주소 안에 괄호(예: (월성동)) 제거 및 쉼표(,) 뒷부분 잘라내기
+        
+    if not coord_df.empty and len(coord_df.columns) >= 3:
+        # 원본 주소에서 괄호() 및 쉼표(,) 뒷부분(상가명 등) 제거
         clean_addr = re.sub(r'\(.*?\)', '', str(address))
         clean_addr = clean_addr.split(',')[0].strip()
+        clean_addr_no_space = clean_addr.replace(" ", "")
         
-        url = "https://dapi.kakao.com/v2/local/search/address.json"
-        headers = {"Authorization": f"KakaoAK {api_key.strip()}"}
-        
-        try:
-            # 1. 정제된 핵심 주소로 먼저 검색
-            res = requests.get(url, headers=headers, params={"query": clean_addr}, timeout=3).json()
-            if res.get('documents'):
-                return float(res['documents'][0]['y']), float(res['documents'][0]['x'])
+        if clean_addr_no_space:
+            addr_col = coord_df.columns[0] # 첫번째 컬럼 (주소)
+            lat_col = coord_df.columns[1]  # 두번째 컬럼 (위도)
+            lon_col = coord_df.columns[2]  # 세번째 컬럼 (경도)
             
-            # 2. 만약 실패하면 원본 주소로 다시 시도
-            res_full = requests.get(url, headers=headers, params={"query": str(address)}, timeout=3).json()
-            if res_full.get('documents'):
-                return float(res_full['documents'][0]['y']), float(res_full['documents'][0]['x'])
-        except Exception:
-            pass
+            # 띄어쓰기 무시하고 유연하게 검색
+            coord_addrs = coord_df[addr_col].astype(str).str.replace(" ", "", regex=False)
+            mask = coord_addrs.str.contains(re.escape(clean_addr_no_space), na=False)
+            match = coord_df[mask]
             
-    # 키가 없거나 실패했을 때만 대구 흩뿌리기
+            if not match.empty:
+                try:
+                    return float(match.iloc[0][lat_col]), float(match.iloc[0][lon_col])
+                except:
+                    pass
+                    
+    # 매핑 실패 시 대구 임의 좌표 반환
     lat = 35.8714 + random.uniform(-0.06, 0.06)
     lon = 128.6014 + random.uniform(-0.06, 0.06)
     return lat, lon
@@ -285,8 +285,12 @@ with st.sidebar:
             if 'merged_csv_df' in st.session_state: del st.session_state['merged_csv_df']
 
     st.markdown("---")
-    st.subheader("🗺️ 지도 API 키")
-    kakao_key = st.text_input("카카오 REST API 키", type="password", help="키가 없으면 대구 임의의 좌표로 매핑됩니다.")
+    # 🟢 핵심 수정: 카카오 API를 빼고 위경도 맵핑 CSV 업로드 칸으로 대체
+    st.subheader("🗺️ 3. 지도 위경도 데이터 (CSV)")
+    up_coord = st.file_uploader("위경도 매핑 파일 업로드 (address_with_latlon.csv)", type=["csv"], key="coord_uploader")
+    coord_df = pd.DataFrame()
+    if up_coord:
+        coord_df = load_safe_csv(up_coord.getvalue())
 
 
 # ─────────────────────────────────────────────────────────
@@ -362,7 +366,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             df_csv_tab["연_csv"] = 2026
             df_csv_tab["월_csv"] = 3
             
-            # 🟢 GJ 변환 (1000.0) 
             if unit_str == "GJ" and "사용량(mj)" in df_csv_tab.columns:
                 df_csv_tab["사용량(mj)"] = pd.to_numeric(df_csv_tab["사용량(mj)"], errors="coerce").fillna(0) / 1000.0
             elif unit_str == "천m³" and "사용량(m3)" in df_csv_tab.columns:
@@ -407,12 +410,11 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("<hr style='margin: 10px 0 30px 0;'>", unsafe_allow_html=True)
 
         # ─────────────────────────────────────────────────────────
-        # 통합 분석 함수 (엑셀 의존성 제거 완료)
+        # 통합 분석 함수
         # ─────────────────────────────────────────────────────────
         def render_full_usage_report(usage_name, section_num, key_sfx, db_key):
             st.markdown(f"""<div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;"><h4 style="margin: 0;">📈 {section_num}. 용도별 판매량 분석 : {usage_name}</h4></div>""", unsafe_allow_html=True)
             
-            # --- 1 & 2. 누적 비교 / 월별 비교 (이 부분은 엑셀 요약 데이터 사용) ---
             if df_long_rpt.empty:
                 st.info("판매량 요약 엑셀 데이터가 없어 상단 차트를 표시할 수 없습니다.")
                 sum_act, sum_prev = 0, 0
@@ -459,7 +461,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     fig_m.update_layout(barmode='group', xaxis=dict(tickmode='linear', tick0=1, dtick=1), xaxis_title="월", yaxis_title=f"판매량({unit_str})", margin=dict(t=10, b=10, l=10, r=10), height=420, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                     st.plotly_chart(fig_m, use_container_width=True)
 
-            # --- 3. 세부 업종별 판매량 비교 ---
             if not df_csv_tab.empty and val_col in df_csv_tab.columns:
                 st.markdown(f"**■ 세부 업종별 판매량 비교 (당해연도 vs 전년도)**")
                 
@@ -510,13 +511,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 else:
                     st.info("해당 용도의 세부 업종 데이터가 없습니다.")
 
-            # --- 4. 코멘트 작성란 ---
             render_comment_section(f"📝 {usage_name} 세부 코멘트 작성", db_key, curr_db, comments_db, 100, f"{usage_name}의 월별 편차 원인 및 특이사항을 기록하세요.", f"{usage_name}_{key_sfx}")
             st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
 
-            # =========================================================
-            # 하단 비교표 및 고객(Top 30) 리스트
-            # =========================================================
             if not df_csv_tab.empty and val_col in df_csv_tab.columns and 'df_sub_filtered' in locals() and not df_sub_filtered.empty:
                 
                 st.markdown(f"**■ 🏢 {usage_name} 세부 업종별 비교표**")
@@ -549,7 +546,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 st.dataframe(center_style(ind_comp.style.format({f"{sel_year_rpt}년": "{:,.0f}", f"{sel_year_rpt-1}년": "{:,.0f}", "증감": "{:,.0f}", "대비(%)": "{:,.1f}"}).apply(highlight_subtotal, axis=1)), use_container_width=True, hide_index=True)
                 st.markdown("<br>", unsafe_allow_html=True)
                 
-                # --- Top 30 리스트 ---
                 st.markdown(f"**■ 🏆 {usage_name} Top 30 업체 List (당해연도 판매량 기준)**")
                 if "고객명" in df_sub_filtered.columns:
                     c_curr_all = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt].groupby(["고객명", grp_col], as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
@@ -579,7 +575,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     st.dataframe(center_style(grp_top_show.style.format({f"{sel_year_rpt}년": "{:,.0f}", f"{sel_year_rpt-1}년": "{:,.0f}", "증감": "{:,.0f}", "대비(%)": "{:,.1f}"}).apply(highlight_subtotal, axis=1)), use_container_width=True, hide_index=True)
                     st.markdown("<br>", unsafe_allow_html=True)
                     
-                    # --- 개별 고객 상세 차트 ---
                     st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트**")
                     top_customers = [c for c in grp_top["고객명"] if "💡" not in c]
                     sel_cust = st.selectbox(f"상세 분석할 고객명을 선택하세요 ({usage_name})", ["선택 안함"] + top_customers, key=f"sel_cust_{usage_name}_{key_sfx}")
@@ -618,9 +613,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             fig_cust_mon.update_layout(title=f"'{sel_cust}' 월별 사용량 추이", barmode='group', xaxis=dict(tickmode='linear', tick0=1, dtick=1), margin=dict(t=50,b=10,l=10,r=10), height=350, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                             st.plotly_chart(fig_cust_mon, use_container_width=True)
 
-        # ─────────────────────────────────────────────────────────
-        # 함수 실행
-        # ─────────────────────────────────────────────────────────
         render_full_usage_report("산업용", "1", key_sfx, "ind")
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
         render_full_usage_report("업무용", "2", key_sfx, "biz")
@@ -632,7 +624,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("### 🗺️ 3. 대용량 수요처 이상 감지 모니터링 지도")
         st.caption("※ YoY 기준 5% 이상 사용량이 하락한 업체를 지도에 마커로 표시하여 현장 방문을 유도합니다.")
         
-        # 🟢 지도 안내문 추가
         st.markdown("""
         <div style='background-color: #f1f3f5; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-size: 14px;'>
             <b>💡 지도 마커(알람) 3단계 구분 안내</b><br>
@@ -675,12 +666,13 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     else:
                         st.warning(f"🚨 총 **{len(alarm_df)}**개의 {map_usage} 업체에서 5% 이상 하락 신호가 감지되었습니다. (지도에는 하락폭이 큰 주요 100개 업체를 표시합니다.)")
                         
+                        # 🟢 엑셀(CSV) 위경도 매핑 로직 적용 (카카오 API 대신 사용)
                         alarm_df["감소량"] = alarm_df["전년도"] - alarm_df["당해년도"]
                         alarm_df = alarm_df.sort_values(by="감소량", ascending=False).head(100).reset_index(drop=True)
                         
                         lats, lons, tooltips, colors, radiuses = [], [], [], [], []
                         for _, row in alarm_df.iterrows():
-                            lat, lon = geocode_address(row['도로명주소'], kakao_key)
+                            lat, lon = get_coord_from_df(row['도로명주소'], coord_df)
                             lats.append(lat)
                             lons.append(lon)
                             
@@ -757,7 +749,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             df_show = alarm_df[show_cols].copy()
                             st.dataframe(center_style(df_show.style.format({"전년도": "{:,.0f}", "당해년도": "{:,.0f}", "증감률(%)": "{:,.1f}"})), use_container_width=True, hide_index=True)
                         else:
-                            st.error("주소 좌표 변환에 실패하여 지도를 표시할 수 없습니다.")
+                            st.error("매핑된 위경도 좌표가 없어 지도를 표시할 수 없습니다.")
                 else:
                     st.info("비교할 과거 또는 당해 연도 데이터가 없습니다.")
         else:
