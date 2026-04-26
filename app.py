@@ -422,6 +422,186 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("<hr style='margin: 10px 0 30px 0;'>", unsafe_allow_html=True)
 
         # ─────────────────────────────────────────────────────────
+        # 🟢 [수정 1] 이상 감지 업체 지도 모니터링 (1번 순서 배치)
+        # ─────────────────────────────────────────────────────────
+        st.markdown(f"### 🗺️ 1. 대용량 수요처 이상 감지 모니터링 지도 <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
+        st.caption("※ YoY 기준 5% 이상 사용량이 하락한 업체를 지도에 마커로 표시하여 현장 방문을 유도합니다.")
+        
+        st.markdown("""
+        <div style='background-color: #f1f3f5; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-size: 14px;'>
+            <b>💡 지도 마커(알람) 3단계 구분 안내</b><br>
+            • <b>심각 (20% 이상 하락)</b> : 가장 크고 진한 색상의 마커<br>
+            • <b>경계 (10% 이상 하락)</b> : 중간 크기와 중간 농도의 마커<br>
+            • <b>주의 (5% 이상 하락)</b> : 작고 연한 색상의 마커<br>
+            <span style='font-size: 12px; color: #555;'>※ 산업용은 붉은색(🔴), 업무용은 푸른색(🔵) 계열로 표시됩니다.</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        map_c1, map_c2 = st.columns(2)
+        with map_c1:
+            map_usage = st.radio("📍 지도에 표시할 용도 선택", ["산업용", "업무용"], index=0, horizontal=True, key=f"map_radio_{key_sfx}")
+        with map_c2:
+            map_style_ui = st.radio("📍 지도 배경 테마", ["다크 모드 (기본)", "일반 도로 지도"], index=0, horizontal=True, key=f"map_style_{key_sfx}")
+        
+        deck_map_style = "dark" if map_style_ui == "다크 모드 (기본)" else "road"
+        
+        if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns and "용도" in df_csv_tab.columns:
+            if agg_mode == "누적 실적 (1월~당월)":
+                df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month].copy()
+            else:
+                df_map_base = df_csv_tab[df_csv_tab["월_csv"] == max_month].copy()
+            
+            if not df_map_base.empty:
+                if map_usage == "산업용":
+                    df_map_filtered = df_map_base[df_map_base["용도"] == "산업용"].copy()
+                else: 
+                    if "상품명" in df_map_base.columns:
+                        prod_s = df_map_base["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
+                        mask = (df_map_base["용도"] == "업무용") | (prod_s.isin(["냉난방용(업무)", "업무난방용", "주한미군"]))
+                        df_map_filtered = df_map_base[mask].copy()
+                    else:
+                        df_map_filtered = df_map_base[df_map_base["용도"] == "업무용"].copy()
+                
+                df_map_filtered["용도_태그"] = f"[{map_usage}]"
+
+                map_curr = df_map_filtered[df_map_filtered["연_csv"] == sel_year_rpt].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
+                map_prev = df_map_filtered[df_map_filtered["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "전년도"})
+                
+                if not map_curr.empty and not map_prev.empty:
+                    df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소", "용도_태그"], how="inner").fillna(0)
+                    
+                    df_map_merged["증감률(%)"] = np.where(df_map_merged["전년도"] > 0, ((df_map_merged["당해년도"] - df_map_merged["전년도"]) / df_map_merged["전년도"]) * 100, 0)
+                    alarm_df = df_map_merged[df_map_merged["증감률(%)"] <= -5].copy()
+                    
+                    if alarm_df.empty:
+                        st.success(f"✅ 선택한 기간 내 YoY 5% 이상 하락한 {map_usage} 리스크 업체가 없습니다.")
+                    else:
+                        st.warning(f"🚨 총 **{len(alarm_df)}**개의 {map_usage} 업체에서 5% 이상 하락 신호가 감지되었습니다. (지도에는 하락폭이 큰 주요 100개 업체를 표시합니다.)")
+                        
+                        alarm_df["감소량"] = alarm_df["전년도"] - alarm_df["당해년도"]
+                        alarm_df = alarm_df.sort_values(by="감소량", ascending=False).head(100).reset_index(drop=True)
+                        
+                        alarm_df["증감"] = alarm_df["당해년도"] - alarm_df["전년도"]
+                        
+                        lats, lons, tooltips, colors, radiuses = [], [], [], [], []
+                        for _, row in alarm_df.iterrows():
+                            lat, lon = get_coord_from_df(row['도로명주소'], coord_df)
+                            lats.append(lat)
+                            lons.append(lon)
+                            
+                            rate = row['증감률(%)']
+                            
+                            if map_usage == "산업용":
+                                if rate <= -20:
+                                    level = "심각"
+                                    colors.append([180, 0, 0, 255]) 
+                                    radiuses.append(150)
+                                elif rate <= -10:
+                                    level = "경계"
+                                    colors.append([255, 80, 80, 200]) 
+                                    radiuses.append(100)
+                                else:
+                                    level = "주의"
+                                    colors.append([255, 150, 150, 200]) 
+                                    radiuses.append(80)
+                            else: 
+                                if rate <= -20:
+                                    level = "심각"
+                                    colors.append([0, 0, 180, 255]) 
+                                    radiuses.append(150)
+                                elif rate <= -10:
+                                    level = "경계"
+                                    colors.append([80, 150, 255, 200]) 
+                                    radiuses.append(100)
+                                else:
+                                    level = "주의"
+                                    colors.append([120, 180, 255, 200]) 
+                                    radiuses.append(80)
+                            
+                            info = f"<b>{row['용도_태그']} {row['고객명']} <span style='color:red;'>[{level}]</span></b><br/>"
+                            info += f"전년: {row['전년도']:,.0f} / 당해: {row['당해년도']:,.0f}<br/>"
+                            info += f"증감률: <span style='color:red; font-weight:bold;'>{row['증감률(%)']:.1f}%</span><br/>"
+                            info += f"<span style='font-size:0.8em; color:gray;'>{row['도로명주소']}</span>"
+                            tooltips.append(info)
+                            
+                        alarm_df['lat'] = lats
+                        alarm_df['lon'] = lons
+                        alarm_df['tooltip'] = tooltips
+                        alarm_df['color'] = colors
+                        alarm_df['radius'] = radiuses
+                        alarm_df = alarm_df.dropna(subset=['lat', 'lon'])
+                        
+                        if not alarm_df.empty:
+                            layer = pdk.Layer(
+                                "ScatterplotLayer",
+                                data=alarm_df,
+                                get_position='[lon, lat]',
+                                get_color='color',     
+                                get_radius='radius',   
+                                pickable=True,
+                                opacity=0.6,
+                                filled=True,
+                                stroked=True,
+                                get_line_color=[255, 255, 255, 200],
+                                line_width_min_pixels=1,
+                                radius_max_pixels=40
+                            )
+                            
+                            view_state = pdk.ViewState(
+                                latitude=alarm_df['lat'].mean(),
+                                longitude=alarm_df['lon'].mean(),
+                                zoom=11,
+                                pitch=40,
+                            )
+                            
+                            r = pdk.Deck(
+                                map_style=deck_map_style, 
+                                layers=[layer],
+                                initial_view_state=view_state,
+                                tooltip={"html": "{tooltip}", "style": {"backgroundColor": "white", "color": "black", "font-family": "NanumGothic"}}
+                            )
+                            st.pydeck_chart(r)
+                            
+                            st.markdown(f"<br><b>📋 지도 표기 업체 요약표</b> <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
+                            
+                            show_cols = ['용도_태그', '고객명', '도로명주소', '전년도', '당해년도', '증감', '증감률(%)']
+                            df_show = alarm_df[show_cols].copy()
+                            
+                            df_show.insert(0, "No.", range(1, len(df_show) + 1))
+                            df_show["비고"] = np.where(df_show["증감률(%)"] <= -99.9, "폐업의심", "")
+                            
+                            sum_prev = df_show["전년도"].sum()
+                            sum_curr = df_show["당해년도"].sum()
+                            sum_rate = ((sum_curr - sum_prev) / sum_prev * 100) if sum_prev > 0 else 0
+                            
+                            total_row = pd.DataFrame([{
+                                "No.": "",
+                                "용도_태그": "💡 총계",
+                                "고객명": "",
+                                "도로명주소": "",
+                                "전년도": sum_prev,
+                                "당해년도": sum_curr,
+                                "증감": sum_curr - sum_prev,
+                                "증감률(%)": sum_rate,
+                                "비고": ""
+                            }])
+                            df_show = pd.concat([df_show, total_row], ignore_index=True)
+                            
+                            def highlight_map_total(s):
+                                is_total = s.astype(str).str.contains('💡 총계')
+                                return ['background-color: #e0e2e6; font-weight: bold;' if is_total.any() else '' for _ in s]
+                                
+                            st.dataframe(center_style(df_show.style.format({"전년도": "{:,.0f}", "당해년도": "{:,.0f}", "증감": "{:,.0f}", "증감률(%)": "{:,.1f}"}).apply(highlight_map_total, axis=1)), use_container_width=True, hide_index=True)
+                        else:
+                            st.error("매핑된 위경도 좌표가 없어 지도를 표시할 수 없습니다.")
+                else:
+                    st.info("비교할 과거 또는 당해 연도 데이터가 없습니다.")
+        else:
+            st.info("데이터에 '도로명주소', '고객명', '용도' 컬럼이 없거나 데이터가 부족하여 지도를 생성할 수 없습니다.")
+
+        st.markdown("<hr style='border-top: 2px solid #1e3a8a; margin: 50px 0 20px 0;'>", unsafe_allow_html=True)
+
+        # ─────────────────────────────────────────────────────────
         # 통합 분석 함수
         # ─────────────────────────────────────────────────────────
         def render_full_usage_report(usage_name, section_num, key_sfx, db_key):
@@ -449,19 +629,22 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 
                 months_list = list(range(1, max_month + 1))
                 
+                # 🟢 [수정 2] 삭제된 요약 박스 상단 복구
+                desc_status = "감소" if diff_prev < 0 else "증가"
+                st.markdown(
+                    f"""
+                    <div style="background-color: #e2e8f0; border-left: 5px solid #1e3a8a; padding: 15px; margin-bottom: 20px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                        <div style="font-size: 14.5px; color: #1e3a8a; font-weight: 700; line-height: 1.6;">
+                            [요약] 당해 실적: {sum_act:,.0f} {unit_str}<br>
+                            전년대비 {abs(diff_prev):,.0f} {unit_str} {desc_status} ({sign_prev}{rate_prev:.1f}%)
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True
+                )
+                
                 col_c, col_m = st.columns([1, 2.5])
                 with col_c:
                     st.markdown(top_title + f" <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
-                    st.markdown(
-                        f"""
-                        <div style="background-color: #e2e8f0; border-left: 5px solid #1e3a8a; padding: 10px 10px; margin-bottom: 0px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                            <div style="font-size: 14.5px; color: #1e3a8a; font-weight: 700; line-height: 1.5;">
-                                당해 실적: {sum_act:,.0f} {unit_str}<br>
-                                전년대비: {sign_prev}{diff_prev:,.0f} ({rate_prev:.1f}%)
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True
-                    )
                     fig_c = go.Figure()
                     fig_c.add_trace(go.Bar(x=[f"{sel_year_rpt-1}년<br>실적", f"{sel_year_rpt}년<br>실적"], y=[sum_prev, sum_act], marker_color=[COLOR_PREV, COLOR_ACT], text=[f"{sum_prev:,.0f}", f"{sum_act:,.0f}"], textposition='auto', textfont=dict(size=14)))
                     fig_c.update_layout(margin=dict(t=25, b=10, l=10, r=10), height=420, showlegend=False)
@@ -642,188 +825,12 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             fig_cust_mon.update_layout(title=f"'{sel_cust}' 월별 사용량 추이", barmode='group', xaxis=dict(tickmode='linear', tick0=1, dtick=1), margin=dict(t=50,b=10,l=10,r=10), height=350, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                             st.plotly_chart(fig_cust_mon, use_container_width=True)
 
-        render_full_usage_report("산업용", "1", key_sfx, "ind")
+        # ─────────────────────────────────────────────────────────
+        # 🟢 [수정 2] 순서 배치 (1. 산업용 / 2. 업무용)
+        # ─────────────────────────────────────────────────────────
+        render_full_usage_report("산업용", "2", key_sfx, "ind")
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
-        render_full_usage_report("업무용", "2", key_sfx, "biz")
-        
-        # ─────────────────────────────────────────────────────────
-        # 3. 이상 감지 업체 지도 모니터링
-        # ─────────────────────────────────────────────────────────
-        st.markdown("<hr style='border-top: 2px solid #1e3a8a; margin: 50px 0 20px 0;'>", unsafe_allow_html=True)
-        st.markdown("### 🗺️ 3. 대용량 수요처 이상 감지 모니터링 지도")
-        st.caption("※ YoY 기준 5% 이상 사용량이 하락한 업체를 지도에 마커로 표시하여 현장 방문을 유도합니다.")
-        
-        st.markdown("""
-        <div style='background-color: #f1f3f5; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-size: 14px;'>
-            <b>💡 지도 마커(알람) 3단계 구분 안내</b><br>
-            • <b>심각 (20% 이상 하락)</b> : 가장 크고 진한 색상의 마커<br>
-            • <b>경계 (10% 이상 하락)</b> : 중간 크기와 중간 농도의 마커<br>
-            • <b>주의 (5% 이상 하락)</b> : 작고 연한 색상의 마커<br>
-            <span style='font-size: 12px; color: #555;'>※ 산업용은 붉은색(🔴), 업무용은 푸른색(🔵) 계열로 표시됩니다.</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        map_c1, map_c2 = st.columns(2)
-        with map_c1:
-            map_usage = st.radio("📍 지도에 표시할 용도 선택", ["산업용", "업무용"], index=0, horizontal=True, key=f"map_radio_{key_sfx}")
-        with map_c2:
-            map_style_ui = st.radio("📍 지도 배경 테마", ["다크 모드 (기본)", "일반 도로 지도"], index=0, horizontal=True, key=f"map_style_{key_sfx}")
-        
-        deck_map_style = "dark" if map_style_ui == "다크 모드 (기본)" else "road"
-        
-        if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns and "용도" in df_csv_tab.columns:
-            if agg_mode == "누적 실적 (1월~당월)":
-                df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month].copy()
-            else:
-                df_map_base = df_csv_tab[df_csv_tab["월_csv"] == max_month].copy()
-            
-            if not df_map_base.empty:
-                if map_usage == "산업용":
-                    df_map_filtered = df_map_base[df_map_base["용도"] == "산업용"].copy()
-                else: 
-                    if "상품명" in df_map_base.columns:
-                        prod_s = df_map_base["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
-                        mask = (df_map_base["용도"] == "업무용") | (prod_s.isin(["냉난방용(업무)", "업무난방용", "주한미군"]))
-                        df_map_filtered = df_map_base[mask].copy()
-                    else:
-                        df_map_filtered = df_map_base[df_map_base["용도"] == "업무용"].copy()
-                
-                df_map_filtered["용도_태그"] = f"[{map_usage}]"
-
-                map_curr = df_map_filtered[df_map_filtered["연_csv"] == sel_year_rpt].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
-                map_prev = df_map_filtered[df_map_filtered["연_csv"] == sel_year_rpt - 1].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "전년도"})
-                
-                if not map_curr.empty and not map_prev.empty:
-                    df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소", "용도_태그"], how="inner").fillna(0)
-                    
-                    df_map_merged["증감률(%)"] = np.where(df_map_merged["전년도"] > 0, ((df_map_merged["당해년도"] - df_map_merged["전년도"]) / df_map_merged["전년도"]) * 100, 0)
-                    alarm_df = df_map_merged[df_map_merged["증감률(%)"] <= -5].copy()
-                    
-                    if alarm_df.empty:
-                        st.success(f"✅ 선택한 기간 내 YoY 5% 이상 하락한 {map_usage} 리스크 업체가 없습니다.")
-                    else:
-                        st.warning(f"🚨 총 **{len(alarm_df)}**개의 {map_usage} 업체에서 5% 이상 하락 신호가 감지되었습니다. (지도에는 하락폭이 큰 주요 100개 업체를 표시합니다.)")
-                        
-                        alarm_df["감소량"] = alarm_df["전년도"] - alarm_df["당해년도"]
-                        alarm_df = alarm_df.sort_values(by="감소량", ascending=False).head(100).reset_index(drop=True)
-                        
-                        alarm_df["증감"] = alarm_df["당해년도"] - alarm_df["전년도"]
-                        
-                        lats, lons, tooltips, colors, radiuses = [], [], [], [], []
-                        for _, row in alarm_df.iterrows():
-                            lat, lon = get_coord_from_df(row['도로명주소'], coord_df)
-                            lats.append(lat)
-                            lons.append(lon)
-                            
-                            rate = row['증감률(%)']
-                            
-                            if map_usage == "산업용":
-                                if rate <= -20:
-                                    level = "심각"
-                                    colors.append([180, 0, 0, 255]) 
-                                    radiuses.append(150)
-                                elif rate <= -10:
-                                    level = "경계"
-                                    colors.append([255, 80, 80, 200]) 
-                                    radiuses.append(100)
-                                else:
-                                    level = "주의"
-                                    colors.append([255, 150, 150, 200]) 
-                                    radiuses.append(80)
-                            else: 
-                                if rate <= -20:
-                                    level = "심각"
-                                    colors.append([0, 0, 180, 255]) 
-                                    radiuses.append(150)
-                                elif rate <= -10:
-                                    level = "경계"
-                                    colors.append([80, 150, 255, 200]) 
-                                    radiuses.append(100)
-                                else:
-                                    level = "주의"
-                                    colors.append([120, 180, 255, 200]) 
-                                    radiuses.append(80)
-                            
-                            info = f"<b>{row['용도_태그']} {row['고객명']} <span style='color:red;'>[{level}]</span></b><br/>"
-                            info += f"전년: {row['전년도']:,.0f} / 당해: {row['당해년도']:,.0f}<br/>"
-                            info += f"증감률: <span style='color:red; font-weight:bold;'>{row['증감률(%)']:.1f}%</span><br/>"
-                            info += f"<span style='font-size:0.8em; color:gray;'>{row['도로명주소']}</span>"
-                            tooltips.append(info)
-                            
-                        alarm_df['lat'] = lats
-                        alarm_df['lon'] = lons
-                        alarm_df['tooltip'] = tooltips
-                        alarm_df['color'] = colors
-                        alarm_df['radius'] = radiuses
-                        alarm_df = alarm_df.dropna(subset=['lat', 'lon'])
-                        
-                        if not alarm_df.empty:
-                            layer = pdk.Layer(
-                                "ScatterplotLayer",
-                                data=alarm_df,
-                                get_position='[lon, lat]',
-                                get_color='color',     
-                                get_radius='radius',   
-                                pickable=True,
-                                opacity=0.6,
-                                filled=True,
-                                stroked=True,
-                                get_line_color=[255, 255, 255, 200],
-                                line_width_min_pixels=1,
-                                radius_max_pixels=40
-                            )
-                            
-                            view_state = pdk.ViewState(
-                                latitude=alarm_df['lat'].mean(),
-                                longitude=alarm_df['lon'].mean(),
-                                zoom=11,
-                                pitch=40,
-                            )
-                            
-                            r = pdk.Deck(
-                                map_style=deck_map_style, 
-                                layers=[layer],
-                                initial_view_state=view_state,
-                                tooltip={"html": "{tooltip}", "style": {"backgroundColor": "white", "color": "black", "font-family": "NanumGothic"}}
-                            )
-                            st.pydeck_chart(r)
-                            
-                            st.markdown(f"<br><b>📋 지도 표기 업체 요약표</b> <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
-                            
-                            show_cols = ['용도_태그', '고객명', '도로명주소', '전년도', '당해년도', '증감', '증감률(%)']
-                            df_show = alarm_df[show_cols].copy()
-                            
-                            df_show.insert(0, "No.", range(1, len(df_show) + 1))
-                            df_show["비고"] = np.where(df_show["증감률(%)"] <= -99.9, "폐업의심", "")
-                            
-                            sum_prev = df_show["전년도"].sum()
-                            sum_curr = df_show["당해년도"].sum()
-                            sum_rate = ((sum_curr - sum_prev) / sum_prev * 100) if sum_prev > 0 else 0
-                            
-                            total_row = pd.DataFrame([{
-                                "No.": "",
-                                "용도_태그": "💡 총계",
-                                "고객명": "",
-                                "도로명주소": "",
-                                "전년도": sum_prev,
-                                "당해년도": sum_curr,
-                                "증감": sum_curr - sum_prev,
-                                "증감률(%)": sum_rate,
-                                "비고": ""
-                            }])
-                            df_show = pd.concat([df_show, total_row], ignore_index=True)
-                            
-                            def highlight_map_total(s):
-                                is_total = s.astype(str).str.contains('💡 총계')
-                                return ['background-color: #e0e2e6; font-weight: bold;' if is_total.any() else '' for _ in s]
-                                
-                            st.dataframe(center_style(df_show.style.format({"전년도": "{:,.0f}", "당해년도": "{:,.0f}", "증감": "{:,.0f}", "증감률(%)": "{:,.1f}"}).apply(highlight_map_total, axis=1)), use_container_width=True, hide_index=True)
-                        else:
-                            st.error("매핑된 위경도 좌표가 없어 지도를 표시할 수 없습니다.")
-                else:
-                    st.info("비교할 과거 또는 당해 연도 데이터가 없습니다.")
-        else:
-            st.info("데이터에 '도로명주소', '고객명', '용도' 컬럼이 없거나 데이터가 부족하여 지도를 생성할 수 없습니다.")
+        render_full_usage_report("업무용", "3", key_sfx, "biz")
 
         # ─────────────────────────────────────────────────────────
         # 4. 보고서 출력
