@@ -607,33 +607,44 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         def render_full_usage_report(usage_name, section_num, key_sfx, db_key):
             st.markdown(f"""<div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;"><h4 style="margin: 0;">📈 {section_num}. 용도별 판매량 분석 : {usage_name}</h4></div>""", unsafe_allow_html=True)
             
-            if df_long_rpt.empty:
-                sum_act, sum_prev = 0, 0
-                diff_prev, rate_prev = 0, 0
-                sign_prev = ""
-                top_title = ""
-                months_list = []
-                p_curr_act, p_prev_act = pd.Series(), pd.Series()
-            else:
+            # 🟢 [핵심 수정] 엑셀 데이터가 없을 경우 CSV 데이터에서 직접 요약값을 계산하여 강제 렌더링
+            if not df_long_rpt.empty:
                 df_u = df_long_rpt[(df_long_rpt["그룹"] == usage_name) & (df_long_rpt["월"] <= max_month)]
                 p_curr_act = df_u[(df_u["연"] == sel_year_rpt) & (df_u["계획/실적"] == "실적")].groupby("월")["값"].sum()
                 p_prev_act = df_u[(df_u["연"] == sel_year_rpt-1) & (df_u["계획/실적"] == "실적")].groupby("월")["값"].sum()
-                
-                if agg_mode == "누적 실적 (1월~당월)":
-                    sum_act = p_curr_act.sum()
-                    sum_prev = p_prev_act.sum()
-                    top_title = f"**■ 누적 실적 비교 ({max_month}월 누적)**"
+            else:
+                if not df_csv_tab.empty and val_col in df_csv_tab.columns:
+                    if "상품명" in df_csv_tab.columns:
+                        csv_products = df_csv_tab["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
+                    else:
+                        csv_products = pd.Series([""] * len(df_csv_tab))
+                        
+                    if usage_name == "산업용":
+                        df_u_csv = df_csv_tab[(csv_products == "산업용") & (df_csv_tab["월_csv"] <= max_month)].copy()
+                    else:
+                        valid_biz_nospaces = ["냉난방용(업무)", "업무난방용", "주한미군"]
+                        df_u_csv = df_csv_tab[(csv_products.isin(valid_biz_nospaces)) & (df_csv_tab["월_csv"] <= max_month)].copy()
+                    
+                    p_curr_act = df_u_csv[df_u_csv["연_csv"] == sel_year_rpt].groupby("월_csv")[val_col].sum()
+                    p_prev_act = df_u_csv[df_u_csv["연_csv"] == sel_year_rpt-1].groupby("월_csv")[val_col].sum()
                 else:
-                    sum_act = p_curr_act.get(max_month, 0)
-                    sum_prev = p_prev_act.get(max_month, 0)
-                    top_title = f"**■ 당월 실적 비교 ({max_month}월 당월)**"
-                
-                diff_prev = sum_act - sum_prev
-                rate_prev = (sum_act / sum_prev * 100) if sum_prev > 0 else 0
-                sign_prev = "+" if diff_prev > 0 else ""
-                months_list = list(range(1, max_month + 1))
-                
-            # 🟢 [수정됨] 용도별 제목 바로 아래, 차트 시작 전 요약 박스 강제 렌더링
+                    p_curr_act, p_prev_act = pd.Series(dtype=float), pd.Series(dtype=float)
+            
+            if agg_mode == "누적 실적 (1월~당월)":
+                sum_act = p_curr_act.sum()
+                sum_prev = p_prev_act.sum()
+                top_title = f"**■ 누적 실적 비교 ({max_month}월 누적)**"
+            else:
+                sum_act = p_curr_act.get(max_month, 0)
+                sum_prev = p_prev_act.get(max_month, 0)
+                top_title = f"**■ 당월 실적 비교 ({max_month}월 당월)**"
+            
+            diff_prev = sum_act - sum_prev
+            rate_prev = (sum_act / sum_prev * 100) if sum_prev > 0 else 0
+            sign_prev = "+" if diff_prev > 0 else ""
+            months_list = list(range(1, max_month + 1))
+            
+            # 🟢 복구된 요약 박스 (항상 렌더링됨)
             desc_status = "감소" if diff_prev < 0 else "증가"
             st.markdown(
                 f"""
@@ -646,25 +657,25 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 """, unsafe_allow_html=True
             )
             
-            if not df_long_rpt.empty:
-                col_c, col_m = st.columns([1, 2.5])
-                with col_c:
-                    st.markdown(top_title + f" <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
-                    fig_c = go.Figure()
-                    fig_c.add_trace(go.Bar(x=[f"{sel_year_rpt-1}년<br>실적", f"{sel_year_rpt}년<br>실적"], y=[sum_prev, sum_act], marker_color=[COLOR_PREV, COLOR_ACT], text=[f"{sum_prev:,.0f}", f"{sum_act:,.0f}"], textposition='auto', textfont=dict(size=14)))
-                    fig_c.update_layout(margin=dict(t=25, b=10, l=10, r=10), height=420, showlegend=False)
-                    st.plotly_chart(fig_c, use_container_width=True)
-                    
-                with col_m:
-                    st.markdown(f"**■ 월별 실적 추이 (YoY)** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
-                    st.markdown("<div style='padding: 1px; margin-bottom: 27px; line-height: 1.5;'>&nbsp;<br>&nbsp;</div>", unsafe_allow_html=True)
-                    fig_m = go.Figure()
-                    vals_act = [p_curr_act.get(m, 0) for m in months_list]
-                    vals_prev = [p_prev_act.get(m, 0) for m in months_list]
-                    fig_m.add_trace(go.Bar(x=months_list, y=vals_prev, name=f'{sel_year_rpt-1}년 실적', marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in vals_prev], textposition='auto', textfont=dict(size=11)))
-                    fig_m.add_trace(go.Bar(x=months_list, y=vals_act, name=f'{sel_year_rpt}년 실적', marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in vals_act], textposition='auto', textfont=dict(size=11)))
-                    fig_m.update_layout(barmode='group', xaxis=dict(tickmode='linear', tick0=1, dtick=1), xaxis_title="월", yaxis_title=f"판매량({unit_str})", margin=dict(t=10, b=10, l=10, r=10), height=420, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                    st.plotly_chart(fig_m, use_container_width=True)
+            # 🟢 엑셀이 없어도 상단 차트(바 차트)가 무조건 뜨도록 조건문 제거
+            col_c, col_m = st.columns([1, 2.5])
+            with col_c:
+                st.markdown(top_title + f" <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
+                fig_c = go.Figure()
+                fig_c.add_trace(go.Bar(x=[f"{sel_year_rpt-1}년<br>실적", f"{sel_year_rpt}년<br>실적"], y=[sum_prev, sum_act], marker_color=[COLOR_PREV, COLOR_ACT], text=[f"{sum_prev:,.0f}", f"{sum_act:,.0f}"], textposition='auto', textfont=dict(size=14)))
+                fig_c.update_layout(margin=dict(t=25, b=10, l=10, r=10), height=420, showlegend=False)
+                st.plotly_chart(fig_c, use_container_width=True)
+                
+            with col_m:
+                st.markdown(f"**■ 월별 실적 추이 (YoY)** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
+                st.markdown("<div style='padding: 1px; margin-bottom: 27px; line-height: 1.5;'>&nbsp;<br>&nbsp;</div>", unsafe_allow_html=True)
+                fig_m = go.Figure()
+                vals_act = [p_curr_act.get(m, 0) for m in months_list]
+                vals_prev = [p_prev_act.get(m, 0) for m in months_list]
+                fig_m.add_trace(go.Bar(x=months_list, y=vals_prev, name=f'{sel_year_rpt-1}년 실적', marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in vals_prev], textposition='auto', textfont=dict(size=11)))
+                fig_m.add_trace(go.Bar(x=months_list, y=vals_act, name=f'{sel_year_rpt}년 실적', marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in vals_act], textposition='auto', textfont=dict(size=11)))
+                fig_m.update_layout(barmode='group', xaxis=dict(tickmode='linear', tick0=1, dtick=1), xaxis_title="월", yaxis_title=f"판매량({unit_str})", margin=dict(t=10, b=10, l=10, r=10), height=420, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                st.plotly_chart(fig_m, use_container_width=True)
 
             if not df_csv_tab.empty and val_col in df_csv_tab.columns:
                 st.markdown(f"**■ 세부 업종별 판매량 비교 (당해연도 vs 전년도)** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
