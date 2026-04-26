@@ -422,7 +422,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("<hr style='margin: 10px 0 30px 0;'>", unsafe_allow_html=True)
 
         # ─────────────────────────────────────────────────────────
-        # 🟢 [수정 1] 이상 감지 업체 지도 모니터링 (1번 순서 배치)
+        # 1. 이상 감지 업체 지도 모니터링
         # ─────────────────────────────────────────────────────────
         st.markdown(f"### 🗺️ 1. 대용량 수요처 이상 감지 모니터링 지도 <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
         st.caption("※ YoY 기준 5% 이상 사용량이 하락한 업체를 지도에 마커로 표시하여 현장 방문을 유도합니다.")
@@ -629,7 +629,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 
                 months_list = list(range(1, max_month + 1))
                 
-                # 🟢 [수정 2] 삭제된 요약 박스 상단 복구
+                # 🟢 용도별 최상단 요약 박스 추가
                 desc_status = "감소" if diff_prev < 0 else "증가"
                 st.markdown(
                     f"""
@@ -825,9 +825,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             fig_cust_mon.update_layout(title=f"'{sel_cust}' 월별 사용량 추이", barmode='group', xaxis=dict(tickmode='linear', tick0=1, dtick=1), margin=dict(t=50,b=10,l=10,r=10), height=350, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                             st.plotly_chart(fig_cust_mon, use_container_width=True)
 
-        # ─────────────────────────────────────────────────────────
-        # 🟢 [수정 2] 순서 배치 (1. 산업용 / 2. 업무용)
-        # ─────────────────────────────────────────────────────────
         render_full_usage_report("산업용", "2", key_sfx, "ind")
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
         render_full_usage_report("업무용", "3", key_sfx, "biz")
