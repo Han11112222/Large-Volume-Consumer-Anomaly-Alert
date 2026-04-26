@@ -609,6 +609,11 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             
             if df_long_rpt.empty:
                 sum_act, sum_prev = 0, 0
+                diff_prev, rate_prev = 0, 0
+                sign_prev = ""
+                top_title = ""
+                months_list = []
+                p_curr_act, p_prev_act = pd.Series(), pd.Series()
             else:
                 df_u = df_long_rpt[(df_long_rpt["그룹"] == usage_name) & (df_long_rpt["월"] <= max_month)]
                 p_curr_act = df_u[(df_u["연"] == sel_year_rpt) & (df_u["계획/실적"] == "실적")].groupby("월")["값"].sum()
@@ -626,22 +631,22 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 diff_prev = sum_act - sum_prev
                 rate_prev = (sum_act / sum_prev * 100) if sum_prev > 0 else 0
                 sign_prev = "+" if diff_prev > 0 else ""
-                
                 months_list = list(range(1, max_month + 1))
                 
-                # 🟢 용도별 최상단 요약 박스 추가
-                desc_status = "감소" if diff_prev < 0 else "증가"
-                st.markdown(
-                    f"""
-                    <div style="background-color: #e2e8f0; border-left: 5px solid #1e3a8a; padding: 15px; margin-bottom: 20px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                        <div style="font-size: 14.5px; color: #1e3a8a; font-weight: 700; line-height: 1.6;">
-                            [요약] 당해 실적: {sum_act:,.0f} {unit_str}<br>
-                            전년대비 {abs(diff_prev):,.0f} {unit_str} {desc_status} ({sign_prev}{rate_prev:.1f}%)
-                        </div>
+            # 🟢 [수정됨] 용도별 제목 바로 아래, 차트 시작 전 요약 박스 강제 렌더링
+            desc_status = "감소" if diff_prev < 0 else "증가"
+            st.markdown(
+                f"""
+                <div style="background-color: #f8f9fa; border-left: 5px solid #1e3a8a; padding: 15px; margin-bottom: 20px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                    <div style="font-size: 15px; color: #1e3a8a; font-weight: 700; line-height: 1.6;">
+                        💡 [요약] 당해 실적: {sum_act:,.0f} {unit_str}<br>
+                        전년대비 <span style="color: {'#d32f2f' if diff_prev < 0 else '#1f77b4'};">{abs(diff_prev):,.0f} {unit_str} {desc_status} ({sign_prev}{rate_prev:.1f}%)</span>
                     </div>
-                    """, unsafe_allow_html=True
-                )
-                
+                </div>
+                """, unsafe_allow_html=True
+            )
+            
+            if not df_long_rpt.empty:
                 col_c, col_m = st.columns([1, 2.5])
                 with col_c:
                     st.markdown(top_title + f" <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
