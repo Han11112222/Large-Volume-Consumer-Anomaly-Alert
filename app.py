@@ -217,19 +217,34 @@ def load_safe_csv(file_bytes) -> pd.DataFrame:
             pass
     return pd.DataFrame()
 
+# 🟢 핵심 수정: 카카오가 잘 알아듣게 주소 정제 (기타 로직은 절대 건드리지 않음)
 @st.cache_data(show_spinner=False)
 def geocode_address(address: str, api_key: str = "") -> Tuple[float, float]:
     if pd.isna(address) or not str(address).strip():
         return None, None
-    if api_key:
-        url = f"https://dapi.kakao.com/v2/local/search/address.json?query={address}"
-        headers = {"Authorization": f"KakaoAK {api_key}"}
+    
+    if api_key and api_key.strip():
+        # 주소 안에 괄호(예: (월성동)) 제거 및 쉼표(,) 뒷부분 잘라내기
+        clean_addr = re.sub(r'\(.*?\)', '', str(address))
+        clean_addr = clean_addr.split(',')[0].strip()
+        
+        url = "https://dapi.kakao.com/v2/local/search/address.json"
+        headers = {"Authorization": f"KakaoAK {api_key.strip()}"}
+        
         try:
-            res = requests.get(url, headers=headers).json()
+            # 1. 정제된 핵심 주소로 먼저 검색
+            res = requests.get(url, headers=headers, params={"query": clean_addr}, timeout=3).json()
             if res.get('documents'):
                 return float(res['documents'][0]['y']), float(res['documents'][0]['x'])
+            
+            # 2. 만약 실패하면 원본 주소로 다시 시도
+            res_full = requests.get(url, headers=headers, params={"query": str(address)}, timeout=3).json()
+            if res_full.get('documents'):
+                return float(res_full['documents'][0]['y']), float(res_full['documents'][0]['x'])
         except Exception:
             pass
+            
+    # 키가 없거나 실패했을 때만 대구 흩뿌리기
     lat = 35.8714 + random.uniform(-0.06, 0.06)
     lon = 128.6014 + random.uniform(-0.06, 0.06)
     return lat, lon
@@ -604,7 +619,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             st.plotly_chart(fig_cust_mon, use_container_width=True)
 
         # ─────────────────────────────────────────────────────────
-        # 함수 실행 (🟢 산업용 1번, 업무용 2번)
+        # 함수 실행
         # ─────────────────────────────────────────────────────────
         render_full_usage_report("산업용", "1", key_sfx, "ind")
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
@@ -617,7 +632,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("### 🗺️ 3. 대용량 수요처 이상 감지 모니터링 지도")
         st.caption("※ YoY 기준 5% 이상 사용량이 하락한 업체를 지도에 마커로 표시하여 현장 방문을 유도합니다.")
         
-        # 🟢 추가된 3단계 구분 안내 설명
+        # 🟢 지도 안내문 추가
         st.markdown("""
         <div style='background-color: #f1f3f5; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-size: 14px;'>
             <b>💡 지도 마커(알람) 3단계 구분 안내</b><br>
@@ -628,7 +643,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         </div>
         """, unsafe_allow_html=True)
         
-        # 🟢 지도 위 활성화 버튼 (라디오 버튼) 추가
         map_usage = st.radio("📍 지도에 표시할 용도 선택", ["산업용", "업무용"], index=0, horizontal=True, key=f"map_radio_{key_sfx}")
         
         if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns and "용도" in df_csv_tab.columns:
