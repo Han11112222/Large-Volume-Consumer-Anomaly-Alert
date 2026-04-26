@@ -405,11 +405,14 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             df_csv_tab["연_csv"] = df_csv_tab["날짜_파싱"].dt.year
             df_csv_tab["월_csv"] = df_csv_tab["날짜_파싱"].dt.month
         
-        c_y, c_m, c_empty = st.columns([1, 1, 2])
+        # 🟢 핵심 추가: 기간 집계 기준 (누적/당월) 버튼
+        c_y, c_m, c_agg, c_empty = st.columns([1, 1, 2, 1])
         with c_y:
             sel_year_rpt = st.selectbox("기준 연도", years_available, index=default_y_index, key=f"rpt_yr{key_sfx}")
         with c_m:
             sel_month_str = st.selectbox("기준 월", [f"{m}월" for m in range(1, 13)], index=default_m_index, key=f"rpt_mo{key_sfx}")
+        with c_agg:
+            agg_mode = st.radio("집계 기준", ["누적 실적 (1월~당월)", "당월 실적"], index=0, horizontal=True, key=f"agg_mode_{key_sfx}")
         
         max_month = int(sel_month_str.replace("월", "")) 
         report_db_key = f"{sel_year_rpt}_{max_month}M_{unit_str}_yoy_only"
@@ -433,8 +436,15 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 p_curr_act = df_u[(df_u["연"] == sel_year_rpt) & (df_u["계획/실적"] == "실적")].groupby("월")["값"].sum()
                 p_prev_act = df_u[(df_u["연"] == sel_year_rpt-1) & (df_u["계획/실적"] == "실적")].groupby("월")["값"].sum()
                 
-                sum_act = p_curr_act.sum()
-                sum_prev = p_prev_act.sum()
+                # 🟢 누적/당월 조건 처리 (요약 텍스트용)
+                if agg_mode == "누적 실적 (1월~당월)":
+                    sum_act = p_curr_act.sum()
+                    sum_prev = p_prev_act.sum()
+                    top_title = f"**■ 누적 실적 비교 ({max_month}월 누적)**"
+                else:
+                    sum_act = p_curr_act.get(max_month, 0)
+                    sum_prev = p_prev_act.get(max_month, 0)
+                    top_title = f"**■ 당월 실적 비교 ({max_month}월 당월)**"
                 
                 diff_prev = sum_act - sum_prev
                 rate_prev = (sum_act / sum_prev * 100) if sum_prev > 0 else 0
@@ -444,7 +454,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 
                 col_c, col_m = st.columns([1, 2.5])
                 with col_c:
-                    st.markdown(f"**■ 누적 실적 비교 ({max_month}월 누적)**")
+                    st.markdown(top_title) # 동적 텍스트 적용
                     st.markdown(
                         f"""
                         <div style="background-color: #e2e8f0; border-left: 5px solid #1e3a8a; padding: 10px 10px; margin-bottom: 0px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
@@ -461,7 +471,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     st.plotly_chart(fig_c, use_container_width=True)
                     
                 with col_m:
-                    st.markdown("**■ 월별 실적 비교 (YoY)**")
+                    st.markdown("**■ 월별 실적 추이 (YoY)**")
                     st.markdown("<div style='padding: 1px; margin-bottom: 27px; line-height: 1.5;'>&nbsp;<br>&nbsp;</div>", unsafe_allow_html=True)
                     fig_m = go.Figure()
                     vals_act = [p_curr_act.get(m, 0) for m in months_list]
@@ -478,13 +488,19 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     csv_products = df_csv_tab["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
                 else:
                     csv_products = pd.Series([""] * len(df_csv_tab))
+                
+                # 🟢 누적/당월 조건 처리 (세부 업종 필터링용)
+                if agg_mode == "누적 실적 (1월~당월)":
+                    month_mask = (df_csv_tab["월_csv"] <= max_month)
+                else:
+                    month_mask = (df_csv_tab["월_csv"] == max_month)
 
                 if usage_name == "산업용":
-                    df_sub_filtered = df_csv_tab[(csv_products == "산업용") & (df_csv_tab["월_csv"] <= max_month)].copy()
+                    df_sub_filtered = df_csv_tab[(csv_products == "산업용") & month_mask].copy()
                     grp_col = "업종"
                 else: 
                     valid_biz_nospaces = ["냉난방용(업무)", "업무난방용", "주한미군"]
-                    df_sub_filtered = df_csv_tab[(csv_products.isin(valid_biz_nospaces)) & (df_csv_tab["월_csv"] <= max_month)].copy()
+                    df_sub_filtered = df_csv_tab[(csv_products.isin(valid_biz_nospaces)) & month_mask].copy()
                     if "업종분류" in df_sub_filtered.columns:
                         df_sub_filtered["업종"] = df_sub_filtered["업종분류"]
                     grp_col = "업종"
@@ -585,19 +601,27 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     st.dataframe(center_style(grp_top_show.style.format({f"{sel_year_rpt}년": "{:,.0f}", f"{sel_year_rpt-1}년": "{:,.0f}", "증감": "{:,.0f}", "대비(%)": "{:,.1f}"}).apply(highlight_subtotal, axis=1)), use_container_width=True, hide_index=True)
                     st.markdown("<br>", unsafe_allow_html=True)
                     
+                    # 🟢 누적/당월 조건 처리 (개별 고객 상세 차트용)
                     st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트**")
                     top_customers = [c for c in grp_top["고객명"] if "💡" not in c]
                     sel_cust = st.selectbox(f"상세 분석할 고객명을 선택하세요 ({usage_name})", ["선택 안함"] + top_customers, key=f"sel_cust_{usage_name}_{key_sfx}")
 
                     if sel_cust != "선택 안함":
-                        c_data = df_sub_filtered[df_sub_filtered["고객명"] == sel_cust]
+                        c_data = df_csv_tab[df_csv_tab["고객명"] == sel_cust]
                         c_grp = c_data.groupby(["연_csv", "월_csv"], as_index=False)[val_col].sum()
                         
                         y_cur = c_grp[(c_grp["연_csv"] == sel_year_rpt) & (c_grp["월_csv"] <= max_month)]
                         y_prev = c_grp[(c_grp["연_csv"] == sel_year_rpt - 1) & (c_grp["월_csv"] <= max_month)]
                         
-                        sum_cur_c = y_cur[val_col].sum()
-                        sum_prev_c = y_prev[val_col].sum()
+                        if agg_mode == "누적 실적 (1월~당월)":
+                            sum_cur_c = y_cur[val_col].sum()
+                            sum_prev_c = y_prev[val_col].sum()
+                            chart_title = f"'{sel_cust}' 누적 사용량 ({max_month}월 누적)"
+                        else:
+                            sum_cur_c = y_cur[y_cur["월_csv"] == max_month][val_col].sum()
+                            sum_prev_c = y_prev[y_prev["월_csv"] == max_month][val_col].sum()
+                            chart_title = f"'{sel_cust}' 당월 사용량 ({max_month}월 당월)"
+                            
                         diff_val = sum_cur_c - sum_prev_c
                         rate_val = (sum_cur_c / sum_prev_c * 100) if sum_prev_c > 0 else 0
                         sign_str = "+" if diff_val > 0 else ""
@@ -608,7 +632,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             fig_cust_cum = go.Figure()
                             fig_cust_cum.add_trace(go.Bar(x=[f"{sel_year_rpt}년", f"{sel_year_rpt-1}년"], y=[sum_cur_c, sum_prev_c], marker_color=[COLOR_ACT, COLOR_PREV], text=[f"{sum_cur_c:,.0f}", f"{sum_prev_c:,.0f}"], textposition='auto'))
                             fig_cust_cum.add_annotation(x=0.5, y=1.05, xref="paper", yref="paper", text=f"<b>{yoy_text}</b>", showarrow=False, font=dict(size=13, color="#d32f2f" if diff_val < 0 else "#1f77b4"), bgcolor="#f8f9fa", bordercolor="#d0d7e5", borderwidth=1, borderpad=4)
-                            fig_cust_cum.update_layout(title=f"'{sel_cust}' 누적 사용량 ({max_month}월 누적)", margin=dict(t=50,b=10,l=10,r=10), height=350)
+                            fig_cust_cum.update_layout(title=chart_title, margin=dict(t=50,b=10,l=10,r=10), height=350)
                             st.plotly_chart(fig_cust_cum, use_container_width=True)
                             
                         with cc2:
@@ -623,9 +647,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             fig_cust_mon.update_layout(title=f"'{sel_cust}' 월별 사용량 추이", barmode='group', xaxis=dict(tickmode='linear', tick0=1, dtick=1), margin=dict(t=50,b=10,l=10,r=10), height=350, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                             st.plotly_chart(fig_cust_mon, use_container_width=True)
 
-        # ─────────────────────────────────────────────────────────
-        # 함수 실행
-        # ─────────────────────────────────────────────────────────
         render_full_usage_report("산업용", "1", key_sfx, "ind")
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
         render_full_usage_report("업무용", "2", key_sfx, "biz")
@@ -637,7 +658,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("### 🗺️ 3. 대용량 수요처 이상 감지 모니터링 지도")
         st.caption("※ YoY 기준 5% 이상 사용량이 하락한 업체를 지도에 마커로 표시하여 현장 방문을 유도합니다.")
         
-        # 🟢 지도 3단계 안내 (수정 완료)
         st.markdown("""
         <div style='background-color: #f1f3f5; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-size: 14px;'>
             <b>💡 지도 마커(알람) 3단계 구분 안내</b><br>
@@ -648,10 +668,21 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         </div>
         """, unsafe_allow_html=True)
         
-        map_usage = st.radio("📍 지도에 표시할 용도 선택", ["산업용", "업무용"], index=0, horizontal=True, key=f"map_radio_{key_sfx}")
+        # 🟢 지도 위 버튼 추가 (테마 선택 추가)
+        map_c1, map_c2 = st.columns(2)
+        with map_c1:
+            map_usage = st.radio("📍 지도에 표시할 용도 선택", ["산업용", "업무용"], index=0, horizontal=True, key=f"map_radio_{key_sfx}")
+        with map_c2:
+            map_style_ui = st.radio("📍 지도 배경 테마", ["다크 모드 (기본)", "일반 도로 지도"], index=0, horizontal=True, key=f"map_style_{key_sfx}")
+        
+        deck_map_style = "dark" if map_style_ui == "다크 모드 (기본)" else "road"
         
         if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns and "용도" in df_csv_tab.columns:
-            df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month].copy()
+            # 🟢 누적/당월 조건 처리 (지도용 데이터 필터)
+            if agg_mode == "누적 실적 (1월~당월)":
+                df_map_base = df_csv_tab[df_csv_tab["월_csv"] <= max_month].copy()
+            else:
+                df_map_base = df_csv_tab[df_csv_tab["월_csv"] == max_month].copy()
             
             if not df_map_base.empty:
                 if map_usage == "산업용":
@@ -691,7 +722,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             
                             rate = row['증감률(%)']
                             
-                            # 🟢 3단계 차등 색상/크기 로직 유지
                             if map_usage == "산업용":
                                 if rate <= -20:
                                     level = "심각"
@@ -756,7 +786,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             )
                             
                             r = pdk.Deck(
-                                map_style="road",
+                                map_style=deck_map_style, # 🟢 선택된 지도 테마 적용
                                 layers=[layer],
                                 initial_view_state=view_state,
                                 tooltip={"html": "{tooltip}", "style": {"backgroundColor": "white", "color": "black", "font-family": "NanumGothic"}}
