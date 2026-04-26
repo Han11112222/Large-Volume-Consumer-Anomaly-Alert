@@ -392,12 +392,12 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("<hr style='margin: 10px 0 30px 0;'>", unsafe_allow_html=True)
 
         # ─────────────────────────────────────────────────────────
-        # 통합 분석 함수
+        # 통합 분석 함수 (엑셀 의존성 제거 완료)
         # ─────────────────────────────────────────────────────────
         def render_full_usage_report(usage_name, section_num, key_sfx, db_key):
             st.markdown(f"""<div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;"><h4 style="margin: 0;">📈 {section_num}. 용도별 판매량 분석 : {usage_name}</h4></div>""", unsafe_allow_html=True)
             
-            # --- 1 & 2. 누적 비교 / 월별 비교 ---
+            # --- 1 & 2. 누적 비교 / 월별 비교 (이 부분은 엑셀 요약 데이터 사용) ---
             if df_long_rpt.empty:
                 st.info("판매량 요약 엑셀 데이터가 없어 상단 차트를 표시할 수 없습니다.")
                 sum_act, sum_prev = 0, 0
@@ -669,28 +669,28 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             if map_usage == "산업용":
                                 if rate <= -20:
                                     level = "심각"
-                                    colors.append([211, 47, 47, 230]) # 진한 빨강
+                                    colors.append([180, 0, 0, 255]) # 진한 빨강
                                     radiuses.append(350)
                                 elif rate <= -10:
                                     level = "경계"
-                                    colors.append([239, 83, 80, 200]) # 중간 빨강
+                                    colors.append([255, 80, 80, 200]) # 중간 빨강
                                     radiuses.append(200)
                                 else:
                                     level = "주의"
-                                    colors.append([255, 138, 101, 160]) # 연한 빨강
+                                    colors.append([255, 180, 180, 150]) # 연한 빨강
                                     radiuses.append(100)
                             else: # 업무용
                                 if rate <= -20:
                                     level = "심각"
-                                    colors.append([25, 118, 210, 230]) # 진한 파랑
+                                    colors.append([0, 0, 180, 255]) # 진한 파랑
                                     radiuses.append(350)
                                 elif rate <= -10:
                                     level = "경계"
-                                    colors.append([66, 165, 245, 200]) # 중간 파랑
+                                    colors.append([80, 150, 255, 200]) # 중간 파랑
                                     radiuses.append(200)
                                 else:
                                     level = "주의"
-                                    colors.append([144, 202, 249, 160]) # 연한 파랑
+                                    colors.append([180, 220, 255, 150]) # 연한 파랑
                                     radiuses.append(100)
                             
                             info = f"<b>{row['용도_태그']} {row['고객명']} <span style='color:red;'>[{level}]</span></b><br/>"
@@ -731,6 +731,12 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                 tooltip={"html": "{tooltip}", "style": {"backgroundColor": "white", "color": "black", "font-family": "NanumGothic"}}
                             )
                             st.pydeck_chart(r)
+                            
+                            # 🟢 [추가] 요약 표 출력
+                            st.markdown("<br><b>📋 지도 표기 업체 요약표</b>", unsafe_allow_html=True)
+                            show_cols = ['용도_태그', '고객명', '도로명주소', '전년도', '당해년도', '증감률(%)']
+                            df_show = alarm_df[show_cols].copy()
+                            st.dataframe(center_style(df_show.style.format({"전년도": "{:,.0f}", "당해년도": "{:,.0f}", "증감률(%)": "{:,.1f}"})), use_container_width=True, hide_index=True)
                         else:
                             st.error("주소 좌표 변환에 실패하여 지도를 표시할 수 없습니다.")
                 else:
