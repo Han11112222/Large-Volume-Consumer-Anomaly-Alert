@@ -281,7 +281,6 @@ with st.sidebar:
             if 'merged_csv_df' in st.session_state: del st.session_state['merged_csv_df']
 
     st.markdown("---")
-    # 🟢 핵심 수정: 깃허브 기본값 및 수동 업로드 라디오 버튼 적용
     st.subheader("🗺️ 3. 지도 위경도 데이터 (CSV)")
     src_coord = st.radio("위경도 데이터 소스", ["레포 파일(깃허브) 사용", "CSV 업로드(.csv)"], index=0, key="coord_src")
     
@@ -291,12 +290,10 @@ with st.sidebar:
         if up_coord:
             coord_df = load_safe_csv(up_coord.getvalue())
     else:
-        # 깃허브 레포지토리 내의 파일 직접 참조 (우선)
         coord_path = Path(__file__).parent / "address_with_latlon.csv"
         if coord_path.exists():
             coord_df = load_safe_csv(coord_path.read_bytes())
         else:
-            # 안전장치: raw URL을 통한 통신 호출
             github_csv_url = "https://raw.githubusercontent.com/Han11112222/quarterly-sales-report/main/address_with_latlon.csv"
             try:
                 res = requests.get(github_csv_url, timeout=5)
@@ -626,6 +623,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             fig_cust_mon.update_layout(title=f"'{sel_cust}' 월별 사용량 추이", barmode='group', xaxis=dict(tickmode='linear', tick0=1, dtick=1), margin=dict(t=50,b=10,l=10,r=10), height=350, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                             st.plotly_chart(fig_cust_mon, use_container_width=True)
 
+        # ─────────────────────────────────────────────────────────
+        # 함수 실행
+        # ─────────────────────────────────────────────────────────
         render_full_usage_report("산업용", "1", key_sfx, "ind")
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
         render_full_usage_report("업무용", "2", key_sfx, "biz")
@@ -637,6 +637,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("### 🗺️ 3. 대용량 수요처 이상 감지 모니터링 지도")
         st.caption("※ YoY 기준 5% 이상 사용량이 하락한 업체를 지도에 마커로 표시하여 현장 방문을 유도합니다.")
         
+        # 🟢 지도 3단계 안내 (수정 완료)
         st.markdown("""
         <div style='background-color: #f1f3f5; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-size: 14px;'>
             <b>💡 지도 마커(알람) 3단계 구분 안내</b><br>
@@ -690,32 +691,33 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             
                             rate = row['증감률(%)']
                             
+                            # 🟢 3단계 차등 색상/크기 로직 유지
                             if map_usage == "산업용":
                                 if rate <= -20:
                                     level = "심각"
                                     colors.append([180, 0, 0, 255]) 
-                                    radiuses.append(350)
+                                    radiuses.append(150)
                                 elif rate <= -10:
                                     level = "경계"
                                     colors.append([255, 80, 80, 200]) 
-                                    radiuses.append(200)
+                                    radiuses.append(100)
                                 else:
                                     level = "주의"
                                     colors.append([255, 180, 180, 150]) 
-                                    radiuses.append(100)
+                                    radiuses.append(60)
                             else: 
                                 if rate <= -20:
                                     level = "심각"
                                     colors.append([0, 0, 180, 255]) 
-                                    radiuses.append(350)
+                                    radiuses.append(150)
                                 elif rate <= -10:
                                     level = "경계"
                                     colors.append([80, 150, 255, 200]) 
-                                    radiuses.append(200)
+                                    radiuses.append(100)
                                 else:
                                     level = "주의"
                                     colors.append([180, 220, 255, 150]) 
-                                    radiuses.append(100)
+                                    radiuses.append(60)
                             
                             info = f"<b>{row['용도_태그']} {row['고객명']} <span style='color:red;'>[{level}]</span></b><br/>"
                             info += f"전년: {row['전년도']:,.0f} / 당해: {row['당해년도']:,.0f}<br/>"
@@ -738,8 +740,12 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                 get_color='color',     
                                 get_radius='radius',   
                                 pickable=True,
-                                opacity=0.8,
+                                opacity=0.6,
                                 filled=True,
+                                stroked=True,
+                                get_line_color=[255, 255, 255, 200],
+                                line_width_min_pixels=1,
+                                radius_max_pixels=40
                             )
                             
                             view_state = pdk.ViewState(
@@ -750,6 +756,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             )
                             
                             r = pdk.Deck(
+                                map_style="road",
                                 layers=[layer],
                                 initial_view_state=view_state,
                                 tooltip={"html": "{tooltip}", "style": {"backgroundColor": "white", "color": "black", "font-family": "NanumGothic"}}
