@@ -587,22 +587,13 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             }])
                             df_show = pd.concat([df_show, total_row], ignore_index=True)
                             
-                            def highlight_map_summary_text_only(s):
+                            # 🟢 [수정 1] 글자 색상을 검정색으로 되돌리고 붉은색 제거
+                            def highlight_map_summary_clean(s):
                                 if s['용도_태그'] == "💡 총계":
                                     return ['background-color: #e0e2e6; font-weight: bold;'] * len(s)
-                                
-                                try:
-                                    drop_val = float(s['증감률(%)'])
-                                except:
-                                    drop_val = 0
-                                
-                                if drop_val <= -15.0:
-                                    return ['color: #b71c1c; font-weight: bold;'] * len(s) 
-                                elif drop_val <= -10.0:
-                                    return ['color: #e65100; font-weight: bold;'] * len(s) 
                                 return [''] * len(s)
                                 
-                            st.dataframe(center_style(df_show.style.format({"전년도": "{:,.0f}", "당해년도": "{:,.0f}", "증감": "{:,.0f}", "증감률(%)": "{:,.1f}"}).apply(highlight_map_summary_text_only, axis=1)), use_container_width=True, hide_index=True)
+                            st.dataframe(center_style(df_show.style.format({"전년도": "{:,.0f}", "당해년도": "{:,.0f}", "증감": "{:,.0f}", "증감률(%)": "{:,.1f}"}).apply(highlight_map_summary_clean, axis=1)), use_container_width=True, hide_index=True)
                         else:
                             st.error("매핑된 위경도 좌표가 없어 지도를 표시할 수 없습니다.")
                 else:
@@ -694,9 +685,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 fig_m.add_trace(go.Bar(x=months_list, y=vals_act, name=f'{sel_year_rpt}년 실적', marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in vals_act], textposition='auto', textfont=dict(size=11)))
                 st.plotly_chart(fig_m, use_container_width=True)
 
-            render_comment_section(f"📝 {usage_name} 세부 코멘트 작성", db_key, curr_db, comments_db, 100, f"{usage_name}의 월별 편차 원인 및 특이사항을 기록하세요.", f"{usage_name}_{key_sfx}")
-            st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
-
             if not df_csv_tab.empty and val_col in df_csv_tab.columns:
                 if "상품명" in df_csv_tab.columns:
                     csv_products = df_csv_tab["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
@@ -717,6 +705,40 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     if "업종분류" in df_sub_filtered.columns:
                         df_sub_filtered["업종"] = df_sub_filtered["업종분류"]
                     grp_col = "업종"
+                    
+                # 🟢 [수정 2] 세부 업종별 판매량 비교 (막대그래프) 복구
+                if not df_sub_filtered.empty and grp_col in df_sub_filtered.columns:
+                    curr_ind_grp = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
+                    prev_ind_grp = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt - 1].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt-1}년"})
+                    
+                    ind_comp_graph = pd.merge(prev_ind_grp, curr_ind_grp, on=grp_col, how="outer").fillna(0)
+                    ind_comp_graph = ind_comp_graph.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
+                    
+                    if len(ind_comp_graph) > 10:
+                        top10_df = ind_comp_graph.iloc[:10].copy()
+                        others_df = ind_comp_graph.iloc[10:].copy()
+                        o_c = others_df[f"{sel_year_rpt}년"].sum()
+                        o_p = others_df[f"{sel_year_rpt-1}년"].sum()
+                        others_row = pd.DataFrame([{grp_col: "기타", f"{sel_year_rpt-1}년": o_p, f"{sel_year_rpt}년": o_c}])
+                        ind_comp_plot = pd.concat([top10_df, others_row], ignore_index=True)
+                    else:
+                        ind_comp_plot = ind_comp_graph.copy()
+                            
+                    ind_comp_plot["증감절대값"] = abs(ind_comp_plot[f"{sel_year_rpt}년"] - ind_comp_plot[f"{sel_year_rpt-1}년"])
+                    max_diff_idx = ind_comp_plot["증감절대값"].idxmax()
+                    
+                    colors_act = [COLOR_ACT] * len(ind_comp_plot)
+                    if pd.notna(max_diff_idx): colors_act[int(max_diff_idx)] = "#d32f2f" 
+                        
+                    st.markdown(f"**■ 세부 업종별 판매량 비교 (당해연도 vs 전년도)** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
+                    fig_ind = go.Figure()
+                    fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[f"{sel_year_rpt-1}년"], name=f'{sel_year_rpt-1}년', marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in ind_comp_plot[f"{sel_year_rpt-1}년"]], textposition='auto', textfont=dict(size=11)))
+                    fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[f"{sel_year_rpt}년"], name=f'{sel_year_rpt}년', marker_color=colors_act, text=[f"{v:,.0f}" if v>0 else "" for v in ind_comp_plot[f"{sel_year_rpt}년"]], textposition='auto', textfont=dict(size=11)))
+                    fig_ind.update_layout(barmode='group', xaxis_title="", yaxis_title=f"판매량({unit_str})", margin=dict(t=10, b=10, l=10, r=10), height=420, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                    st.plotly_chart(fig_ind, use_container_width=True)
+
+                render_comment_section(f"📝 {usage_name} 세부 코멘트 작성", db_key, curr_db, comments_db, 100, f"{usage_name}의 월별 편차 원인 및 특이사항을 기록하세요.", f"{usage_name}_{key_sfx}")
+                st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
 
                 st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
                 
