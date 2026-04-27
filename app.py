@@ -532,9 +532,22 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                         alarm_df = alarm_df.dropna(subset=['lat', 'lon'])
                         
                         if not alarm_df.empty:
+                            editor_key = f"editor_{map_usage}_{key_sfx}"
+                            selected_indices = []
+                            if editor_key in st.session_state:
+                                edited_rows = st.session_state[editor_key].get("edited_rows", {})
+                                for idx_str, row_changes in edited_rows.items():
+                                    if row_changes.get("선택", False):
+                                        selected_indices.append(int(idx_str))
+                                        
+                            if selected_indices:
+                                map_df = alarm_df.iloc[selected_indices].copy()
+                            else:
+                                map_df = alarm_df.copy()
+                            
                             layer = pdk.Layer(
                                 "ScatterplotLayer",
-                                data=alarm_df,
+                                data=map_df,
                                 get_position='[lon, lat]',
                                 get_color='color',     
                                 get_radius='radius',   
@@ -547,34 +560,108 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                 radius_max_pixels=40
                             )
                             
+                            layers = [layer]
+                            start_lat, start_lon = 35.8660194, 128.5332943
+                            
+                            if selected_indices:
+                                unvisited = map_df[['lon', 'lat', '고객명']].to_dict('records')
+                                curr_lat, curr_lon = start_lat, start_lon
+                                route_coords = [[start_lon, start_lat]]
+                                
+                                while unvisited:
+                                    def dist(pt):
+                                        return (pt['lat'] - curr_lat)**2 + (pt['lon'] - curr_lon)**2
+                                    nearest = min(unvisited, key=dist)
+                                    route_coords.append([nearest['lon'], nearest['lat']])
+                                    curr_lat, curr_lon = nearest['lat'], nearest['lon']
+                                    unvisited.remove(nearest)
+                                    
+                                path_data = pd.DataFrame([{"path": route_coords, "color": [46, 204, 113, 255]}])
+                                
+                                layers.append(pdk.Layer(
+                                    "PathLayer",
+                                    data=path_data,
+                                    get_path="path",
+                                    get_color="color",
+                                    width_scale=20,
+                                    width_min_pixels=3,
+                                    get_width=5
+                                ))
+                                
+                                start_pt_data = pd.DataFrame([{
+                                    "lon": start_lon,
+                                    "lat": start_lat,
+                                    "tooltip": "<b>🏢 대성에너지 서부지사 (출발지)</b><br>대구광역시 서구 와룡로73길 30",
+                                    "color": [255, 193, 7, 255],
+                                    "radius": 150
+                                }])
+                                
+                                layers.append(pdk.Layer(
+                                    "ScatterplotLayer",
+                                    data=start_pt_data,
+                                    get_position='[lon, lat]',
+                                    get_color='color',
+                                    get_radius='radius',
+                                    pickable=True,
+                                    opacity=1.0,
+                                    filled=True,
+                                    stroked=True,
+                                    get_line_color=[0, 0, 0, 255],
+                                    line_width_min_pixels=2,
+                                    radius_max_pixels=15
+                                ))
+                                
                             view_state = pdk.ViewState(
-                                latitude=alarm_df['lat'].mean(),
-                                longitude=alarm_df['lon'].mean(),
-                                zoom=11,
+                                latitude=start_lat if selected_indices else alarm_df['lat'].mean(),
+                                longitude=start_lon if selected_indices else alarm_df['lon'].mean(),
+                                zoom=11 if selected_indices else 11,
                                 pitch=40,
                             )
                             
                             r = pdk.Deck(
                                 map_style=deck_map_style, 
-                                layers=[layer],
+                                layers=layers,
                                 initial_view_state=view_state,
                                 tooltip={"html": "{tooltip}", "style": {"backgroundColor": "white", "color": "black", "font-family": "NanumGothic"}}
                             )
                             st.pydeck_chart(r)
                             
-                            st.markdown(f"<br><b>📋 지도 표기 업체 요약표</b> <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
+                            st.markdown(f"<br><b>📋 지도 표기 업체 요약표</b> <span style='font-size:13px; color:#d32f2f; margin-left:10px;'>✅ 표 좌측 [선택] 체크 시 상단 지도에 <b>최적 방문 동선(출발: 서부지사)</b>이 표시됩니다.</span> <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
                             
                             show_cols = ['용도_태그', '고객명', '도로명주소', '전년도', '당해년도', '증감', '증감률(%)']
                             df_show = alarm_df[show_cols].copy()
                             
                             df_show.insert(0, "No.", range(1, len(df_show) + 1))
+                            df_show.insert(0, "선택", False)
                             df_show["비고"] = np.where(df_show["증감률(%)"] <= -99.9, "폐업의심", "")
+                            
+                            def highlight_map_summary_clean(s):
+                                try:
+                                    drop_val = float(s['증감률(%)'])
+                                except:
+                                    drop_val = 0
+                                
+                                if drop_val <= -15.0:
+                                    return ['color: #b71c1c; font-weight: bold;'] * len(s) 
+                                elif drop_val <= -10.0:
+                                    return ['color: #e65100; font-weight: bold;'] * len(s) 
+                                return [''] * len(s)
+                                
+                            st.data_editor(
+                                center_style(df_show.style.format({"전년도": "{:,.0f}", "당해년도": "{:,.0f}", "증감": "{:,.0f}", "증감률(%)": "{:,.1f}"}).apply(highlight_map_summary_clean, axis=1)),
+                                column_config={"선택": st.column_config.CheckboxColumn("선택", default=False)},
+                                disabled=[c for c in df_show.columns if c != "선택"],
+                                use_container_width=True,
+                                hide_index=True,
+                                key=editor_key
+                            )
                             
                             sum_prev_all = df_show["전년도"].sum()
                             sum_curr_all = df_show["당해년도"].sum()
                             sum_rate_all = ((sum_curr_all - sum_prev_all) / sum_prev_all * 100) if sum_prev_all > 0 else 0
                             
                             total_row = pd.DataFrame([{
+                                "선택": False,
                                 "No.": "",
                                 "용도_태그": "💡 총계",
                                 "고객명": "",
@@ -585,15 +672,11 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                 "증감률(%)": sum_rate_all,
                                 "비고": ""
                             }])
-                            df_show = pd.concat([df_show, total_row], ignore_index=True)
                             
-                            # 🟢 [수정 1] 글자 색상을 검정색으로 되돌리고 붉은색 제거
-                            def highlight_map_summary_clean(s):
-                                if s['용도_태그'] == "💡 총계":
-                                    return ['background-color: #e0e2e6; font-weight: bold;'] * len(s)
-                                return [''] * len(s)
+                            def highlight_map_total(s):
+                                return ['background-color: #e0e2e6; font-weight: bold;'] * len(s)
                                 
-                            st.dataframe(center_style(df_show.style.format({"전년도": "{:,.0f}", "당해년도": "{:,.0f}", "증감": "{:,.0f}", "증감률(%)": "{:,.1f}"}).apply(highlight_map_summary_clean, axis=1)), use_container_width=True, hide_index=True)
+                            st.dataframe(center_style(total_row.style.format({"전년도": "{:,.0f}", "당해년도": "{:,.0f}", "증감": "{:,.0f}", "증감률(%)": "{:,.1f}"}).apply(highlight_map_total, axis=1)), use_container_width=True, hide_index=True)
                         else:
                             st.error("매핑된 위경도 좌표가 없어 지도를 표시할 수 없습니다.")
                 else:
@@ -706,7 +789,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                         df_sub_filtered["업종"] = df_sub_filtered["업종분류"]
                     grp_col = "업종"
                     
-                # 🟢 [수정 2] 세부 업종별 판매량 비교 (막대그래프) 복구
                 if not df_sub_filtered.empty and grp_col in df_sub_filtered.columns:
                     curr_ind_grp = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
                     prev_ind_grp = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt - 1].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt-1}년"})
