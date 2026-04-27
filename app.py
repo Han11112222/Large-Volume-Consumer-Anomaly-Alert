@@ -562,7 +562,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             )
                             st.pydeck_chart(r)
                             
-                            # 🟢 [수정됨] 지도 하단 요약표 하이라이트 기능 추가
+                            # 🟢 [교정 완료] 흰색 배경 요약표 하이라이트 (총계만 회색)
                             st.markdown(f"<br><b>📋 지도 표기 업체 요약표</b> <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
                             
                             show_cols = ['용도_태그', '고객명', '도로명주소', '전년도', '당해년도', '증감', '증감률(%)']
@@ -588,23 +588,13 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             }])
                             df_show = pd.concat([df_show, total_row], ignore_index=True)
                             
-                            def highlight_map_summary(s):
+                            def highlight_map_summary_clean(s):
                                 if s['용도_태그'] == "💡 총계":
                                     return ['background-color: #e0e2e6; font-weight: bold;'] * len(s)
-                                
-                                try:
-                                    drop_val = float(s['증감률(%)'])
-                                except:
-                                    drop_val = 0
-                                
-                                # 🟢 15% 이상 하락(진한 빨강) / 10% 이상 하락(연한 주황) 하이라이트 적용
-                                if drop_val <= -15.0:
-                                    return ['background-color: #ffcdd2; color: #b71c1c; font-weight: bold;'] * len(s)
-                                elif drop_val <= -10.0:
-                                    return ['background-color: #ffe0b2; color: #e65100; font-weight: bold;'] * len(s)
+                                # 🟢 형님 요청사항: 나머지 모든 일반 행은 흰색 배경으로 수정
                                 return [''] * len(s)
                                 
-                            st.dataframe(center_style(df_show.style.format({"전년도": "{:,.0f}", "당해년도": "{:,.0f}", "증감": "{:,.0f}", "증감률(%)": "{:,.1f}"}).apply(highlight_map_summary, axis=1)), use_container_width=True, hide_index=True)
+                            st.dataframe(center_style(df_show.style.format({"전년도": "{:,.0f}", "당해년도": "{:,.0f}", "증감": "{:,.0f}", "증감률(%)": "{:,.1f}"}).apply(highlight_map_summary_clean, axis=1)), use_container_width=True, hide_index=True)
                         else:
                             st.error("매핑된 위경도 좌표가 없어 지도를 표시할 수 없습니다.")
                 else:
@@ -686,7 +676,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 fig_m.add_trace(go.Bar(x=months_list, y=vals_act, name=f'{sel_year_rpt}년 실적', marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in vals_act], textposition='auto', textfont=dict(size=11)))
                 st.plotly_chart(fig_m, use_container_width=True)
 
-            # 🟢 [수정됨] 1, 2번 요청사항 반영하여 차트와 업종별 표 삭제함
             render_comment_section(f"📝 {usage_name} 세부 코멘트 작성", db_key, curr_db, comments_db, 100, f"{usage_name}의 월별 편차 원인 및 특이사항을 기록하세요.", f"{usage_name}_{key_sfx}")
             st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
 
@@ -707,7 +696,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     valid_biz_nospaces = ["냉난방용(업무)", "업무난방용", "주한미군"]
                     df_sub_filtered = df_csv_tab[(csv_products.isin(valid_biz_nospaces)) & month_mask].copy()
 
-                # 🟢 [수정됨] 개별 고객 상세 차트만 남기고 랭킹 표는 삭제함
                 st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
                 
                 if not df_sub_filtered.empty and "고객명" in df_sub_filtered.columns:
@@ -755,6 +743,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             fig_cust_mon.add_trace(go.Bar(x=months_c, y=cur_vals, name=f"{sel_year_rpt}년", marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in cur_vals], textposition='auto', textfont=dict(size=11)))
                             st.plotly_chart(fig_cust_mon, use_container_width=True)
 
+        # 🟢 [수정 완료] 2번 산업용, 3번 업무용 섹션 모두 완벽 구성
         render_full_usage_report("산업용", "2", key_sfx, "ind")
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
         render_full_usage_report("업무용", "3", key_sfx, "biz")
