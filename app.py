@@ -698,11 +698,17 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                         df_sub_filtered["업종"] = df_sub_filtered["업종분류"]
                     grp_col = "업종"
 
-                st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
-                
+                # 🟢 [복구됨] 개별 고객 명단 데이터 추출 (차트 렌더링에 필수적임)
                 if not df_sub_filtered.empty and "고객명" in df_sub_filtered.columns:
-                    top_cust_data = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt].groupby("고객명")[val_col].sum().sort_values(ascending=False).head(50)
-                    top_customers = top_cust_data.index.tolist()
+                    c_curr_all = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt].groupby(["고객명", grp_col], as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
+                    c_prev_all = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt - 1].groupby(["고객명", grp_col], as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt-1}년"})
+                    
+                    grp_top = pd.merge(c_prev_all, c_curr_all, on=["고객명", grp_col], how="outer").fillna(0)
+                    grp_top = grp_top.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
+                    grp_top = grp_top[(grp_top[f"{sel_year_rpt}년"] > 0) | (grp_top[f"{sel_year_rpt-1}년"] > 0)].reset_index(drop=True)
+                    
+                    st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
+                    top_customers = [c for c in grp_top["고객명"] if "💡" not in c]
                     sel_cust = st.selectbox(f"상세 분석할 고객명을 선택하세요 ({usage_name})", ["선택 안함"] + top_customers, key=f"sel_cust_{usage_name}_{key_sfx}")
 
                     if sel_cust != "선택 안함":
