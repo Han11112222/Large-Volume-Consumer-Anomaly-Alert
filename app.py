@@ -245,6 +245,36 @@ def get_coord_from_df(address: str, coord_df: pd.DataFrame) -> Tuple[float, floa
     lon = 128.6014 + random.uniform(-0.06, 0.06)
     return lat, lon
 
+# 🟢 카카오 모빌리티 API 다중 목적지 경로 탐색 함수 추가
+KAKAO_REST_API_KEY = "d9532fed7e56e09fe392c3482b915a20"
+
+def get_kakao_route(start_lon, start_lat, end_lon, end_lat):
+    url = "https://apis-navi.kakaomobility.com/v1/directions"
+    headers = {"Authorization": f"KakaoAK {KAKAO_REST_API_KEY}"}
+    params = {
+        "origin": f"{start_lon},{start_lat}",
+        "destination": f"{end_lon},{end_lat}",
+        "priority": "RECOMMEND", 
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=5)
+        if response.status_code == 200:
+            res_json = response.json()
+            path_coords = []
+            if res_json.get("routes"):
+                sections = res_json["routes"][0]["sections"]
+                for section in sections:
+                    for road in section["roads"]:
+                        vertices = road["vertexes"]
+                        for i in range(0, len(vertices), 2):
+                            path_coords.append([vertices[i], vertices[i+1]])
+            return path_coords
+        else:
+            return None
+    except Exception as e:
+        return None
+
 
 # ─────────────────────────────────────────────────────────
 # 사이드바
@@ -565,7 +595,10 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             layers = [layer]
                             start_lat, start_lon = 35.8660194, 128.5332943
                             
+                            # 🟢 [핵심 추가] 카카오 API 동선 그리기 버튼 로직
                             if selected_indices:
+                                draw_route = st.button("🚗 선택 업체 최적 동선(실제 도로) 그리기", use_container_width=True)
+                                
                                 start_pt_data = pd.DataFrame([{
                                     "lon": start_lon,
                                     "lat": start_lat,
@@ -589,6 +622,48 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                     radius_max_pixels=15
                                 ))
                                 
+                                if draw_route:
+                                    with st.spinner("카카오 모빌리티 API를 통해 최적 도로 경로를 탐색 중입니다..."):
+                                        unvisited = map_df[['lon', 'lat', '고객명']].to_dict('records')
+                                        curr_lat, curr_lon = start_lat, start_lon
+                                        ordered_stops = []
+                                        
+                                        # TSP (가장 가까운 순) 정렬
+                                        while unvisited:
+                                            def dist(pt): return (pt['lat'] - curr_lat)**2 + (pt['lon'] - curr_lon)**2
+                                            nearest = min(unvisited, key=dist)
+                                            ordered_stops.append(nearest)
+                                            curr_lat, curr_lon = nearest['lat'], nearest['lon']
+                                            unvisited.remove(nearest)
+                                            
+                                        full_route_coords = []
+                                        current_pt = [start_lon, start_lat]
+                                        
+                                        # API 연속 호출하여 도로 경로 받아오기
+                                        for stop in ordered_stops:
+                                            target_pt = [stop['lon'], stop['lat']]
+                                            route_segment = get_kakao_route(current_pt[0], current_pt[1], target_pt[0], target_pt[1])
+                                            
+                                            if route_segment:
+                                                full_route_coords.extend(route_segment)
+                                            else:
+                                                # 통신 실패 시 단순 직선으로 잇기
+                                                full_route_coords.extend([current_pt, target_pt])
+                                            current_pt = target_pt
+                                            
+                                        if full_route_coords:
+                                            path_data = pd.DataFrame([{"path": full_route_coords, "color": [46, 204, 113, 255]}])
+                                            layers.append(pdk.Layer(
+                                                "PathLayer",
+                                                data=path_data,
+                                                get_path="path",
+                                                get_color="color",
+                                                width_scale=20,
+                                                width_min_pixels=3,
+                                                get_width=5
+                                            ))
+                                            st.success("✨ 최적 도로 경로가 지도에 표시되었습니다!")
+                            
                             view_state = pdk.ViewState(
                                 latitude=start_lat if selected_indices else alarm_df['lat'].mean(),
                                 longitude=start_lon if selected_indices else alarm_df['lon'].mean(),
@@ -604,7 +679,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             )
                             st.pydeck_chart(r)
                             
-                            st.markdown(f"<br><b>📋 지도 표기 업체 요약표</b> <span style='font-size:13px; color:#d32f2f; margin-left:10px;'>✅ 표 좌측 [선택] 체크 시 상단 지도에 <b>선택한 업체와 서부지사(출발지)</b>만 별도로 표시됩니다.</span> <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
+                            st.markdown(f"<br><b>📋 지도 표기 업체 요약표</b> <span style='font-size:13px; color:#d32f2f; margin-left:10px;'>✅ 표 좌측 [선택] 체크 시 상단 지도에 선택 업체와 출발지가 뜹니다.</span> <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
                             
                             show_cols = ['용도_태그', '고객명', '도로명주소', '전년도', '당해년도', '증감', '증감률(%)']
                             df_show = alarm_df[show_cols].copy()
@@ -632,6 +707,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             
                             df_show = pd.concat([df_show, total_row], ignore_index=True)
                             
+                            # 🟢 [수정 1] 배경색 및 글자색을 전부 기본(검은색 텍스트/흰색 배경)으로 원복하고, 총계 행만 회색 배경
                             def highlight_map_total(s):
                                 is_total = s.astype(str).str.contains('💡 총계').any()
                                 if is_total:
@@ -737,6 +813,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 fig_m.add_trace(go.Bar(x=months_list, y=vals_act, name=f'{sel_year_rpt}년 실적', marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in vals_act], textposition='auto', textfont=dict(size=11)))
                 st.plotly_chart(fig_m, use_container_width=True)
 
+            render_comment_section(f"📝 {usage_name} 세부 코멘트 작성", db_key, curr_db, comments_db, 100, f"{usage_name}의 월별 편차 원인 및 특이사항을 기록하세요.", f"{usage_name}_{key_sfx}")
+            st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
+
             if not df_csv_tab.empty and val_col in df_csv_tab.columns:
                 if "상품명" in df_csv_tab.columns:
                     csv_products = df_csv_tab["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
@@ -757,39 +836,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     if "업종분류" in df_sub_filtered.columns:
                         df_sub_filtered["업종"] = df_sub_filtered["업종분류"]
                     grp_col = "업종"
-                    
-                if not df_sub_filtered.empty and grp_col in df_sub_filtered.columns:
-                    curr_ind_grp = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt}년"})
-                    prev_ind_grp = df_sub_filtered[df_sub_filtered["연_csv"] == sel_year_rpt - 1].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: f"{sel_year_rpt-1}년"})
-                    
-                    ind_comp_graph = pd.merge(prev_ind_grp, curr_ind_grp, on=grp_col, how="outer").fillna(0)
-                    ind_comp_graph = ind_comp_graph.sort_values(f"{sel_year_rpt}년", ascending=False).reset_index(drop=True)
-                    
-                    if len(ind_comp_graph) > 10:
-                        top10_df = ind_comp_graph.iloc[:10].copy()
-                        others_df = ind_comp_graph.iloc[10:].copy()
-                        o_c = others_df[f"{sel_year_rpt}년"].sum()
-                        o_p = others_df[f"{sel_year_rpt-1}년"].sum()
-                        others_row = pd.DataFrame([{grp_col: "기타", f"{sel_year_rpt-1}년": o_p, f"{sel_year_rpt}년": o_c}])
-                        ind_comp_plot = pd.concat([top10_df, others_row], ignore_index=True)
-                    else:
-                        ind_comp_plot = ind_comp_graph.copy()
-                            
-                    ind_comp_plot["증감절대값"] = abs(ind_comp_plot[f"{sel_year_rpt}년"] - ind_comp_plot[f"{sel_year_rpt-1}년"])
-                    max_diff_idx = ind_comp_plot["증감절대값"].idxmax()
-                    
-                    colors_act = [COLOR_ACT] * len(ind_comp_plot)
-                    if pd.notna(max_diff_idx): colors_act[int(max_diff_idx)] = "#d32f2f" 
-                        
-                    st.markdown(f"**■ 세부 업종별 판매량 비교 (당해연도 vs 전년도)** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
-                    fig_ind = go.Figure()
-                    fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[f"{sel_year_rpt-1}년"], name=f'{sel_year_rpt-1}년', marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in ind_comp_plot[f"{sel_year_rpt-1}년"]], textposition='auto', textfont=dict(size=11)))
-                    fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[f"{sel_year_rpt}년"], name=f'{sel_year_rpt}년', marker_color=colors_act, text=[f"{v:,.0f}" if v>0 else "" for v in ind_comp_plot[f"{sel_year_rpt}년"]], textposition='auto', textfont=dict(size=11)))
-                    fig_ind.update_layout(barmode='group', xaxis_title="", yaxis_title=f"판매량({unit_str})", margin=dict(t=10, b=10, l=10, r=10), height=420, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                    st.plotly_chart(fig_ind, use_container_width=True)
-
-                render_comment_section(f"📝 {usage_name} 세부 코멘트 작성", db_key, curr_db, comments_db, 100, f"{usage_name}의 월별 편차 원인 및 특이사항을 기록하세요.", f"{usage_name}_{key_sfx}")
-                st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
 
                 st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
                 
