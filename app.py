@@ -66,42 +66,6 @@ def save_comments_db(db_data):
     except Exception:
         pass
 
-def render_comment_section(title, db_key, curr_db, comments_db, height, placeholder, widget_key):
-    st.markdown(f"**{title}**")
-    saved_text = curr_db.get(db_key, None)
-    
-    if saved_text is not None:
-        url_pattern = re.compile(r'(https?://[^\s]+)')
-        linked_text = url_pattern.sub(r'<a href="\1" target="_blank" style="color: #2563eb; text-decoration: underline; font-weight: bold;">\1</a>', saved_text)
-        formatted_text = linked_text.replace('\n', '<br>')
-        st.markdown(
-            f"""
-            <div style="background-color: #f8f9fa; border: 1px solid #e9ecef; border-left: 4px solid #1f77b4; padding: 15px; border-radius: 4px; color: #1e40af; font-size: 14.5px; line-height: 1.6; margin-bottom: 10px;">
-                {formatted_text}
-            </div>
-            """, unsafe_allow_html=True
-        )
-        
-        with st.expander("📝 코멘트 수정/삭제"):
-            new_text = st.text_area("내용 수정", value=saved_text, height=height, key=f"edit_ta_{widget_key}", label_visibility="collapsed")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("💾 수정 내용 저장", key=f"edit_save_{widget_key}", use_container_width=True):
-                    curr_db[db_key] = new_text
-                    save_comments_db(comments_db)
-                    st.rerun()
-            with col2:
-                if st.button("🗑️ 코멘트 삭제", key=f"del_{widget_key}", use_container_width=True):
-                    curr_db.pop(db_key, None)
-                    save_comments_db(comments_db)
-                    st.rerun()
-    else:
-        input_text = st.text_area("내용 입력", height=height, placeholder=placeholder, key=f"ta_{widget_key}", label_visibility="collapsed")
-        if st.button("💾 이 코멘트 저장", key=f"save_{widget_key}"):
-            curr_db[db_key] = input_text
-            save_comments_db(comments_db)
-            st.rerun()
-
 
 # ─────────────────────────────────────────────────────────
 # 데이터 전처리 유틸
@@ -467,7 +431,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         </div>
         """, unsafe_allow_html=True)
         
-        # 🟢 [수정됨] 3분할 맵 옵션 (전월대비 버튼 추가)
         map_c1, map_c2, map_c3 = st.columns([1, 1, 1])
         with map_c1:
             map_usage = st.radio("📍 지도에 표시할 용도 선택", ["산업용", "업무용"], index=0, horizontal=True, key=f"map_radio_{key_sfx}")
@@ -478,7 +441,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         
         deck_map_style = "dark" if map_style_ui == "다크 모드 (기본)" else "road"
         
-        # 동기화할 년/월 변수 설정
         curr_year = sel_year_rpt
         curr_month = max_month
         if comp_mode == "YoY":
@@ -615,7 +577,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             start_lat, start_lon = 35.8660194, 128.5332943
                             
                             if selected_indices:
-                                draw_route = st.button("🚗 선택 업체 최적 동선(실제 도로) 그리기", use_container_width=True)
+                                # 🟢 [수정됨] 이름표가 부여된 버튼으로 수정 완료 (에러 방지)
+                                draw_route = st.button("🚗 선택 업체 최적 동선(실제 도로) 그리기", use_container_width=True, key=f"draw_route_btn_{key_sfx}")
                                 
                                 start_pt_data = pd.DataFrame([{
                                     "lon": start_lon,
@@ -696,7 +659,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             
                             st.markdown(f"<br><b>📋 지도 표기 업체 요약표</b> <span style='font-size:13px; color:#d32f2f; margin-left:10px;'>✅ 표 좌측 [선택] 체크 시 상단 지도에 선택 업체와 출발지가 뜹니다.</span> <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
                             
-                            # 🟢 [수정됨] 표 데이터 컬럼명 다이나믹 변환
                             prev_col_name = "전년도" if comp_mode == "YoY" else "전월"
                             curr_col_name = "당해년도" if comp_mode == "YoY" else "당월"
                             
@@ -727,7 +689,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             
                             df_show = pd.concat([df_show, total_row], ignore_index=True)
                             
-                            # 🟢 [수정 완료] 배경색 없이 순수 검정색으로 텍스트만!
                             def highlight_map_total(s):
                                 is_total = s.astype(str).str.contains('💡 총계').any()
                                 if is_total:
@@ -759,7 +720,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         def render_full_usage_report(usage_name, section_num, key_sfx, db_key):
             st.markdown(f"""<div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;"><h4 style="margin: 0;">📈 {section_num}. 용도별 판매량 분석 : {usage_name}</h4></div>""", unsafe_allow_html=True)
             
-            # 🟢 [수정됨] YoY / 전월대비 로직 (차트 데이터 동기화)
             if not df_long_rpt.empty:
                 df_u = df_long_rpt[(df_long_rpt["그룹"] == usage_name)]
                 p_curr_act_all = df_u[(df_u["연"] == curr_year) & (df_u["계획/실적"] == "실적")].groupby("월")["값"].sum()
@@ -889,7 +849,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 mask_curr_sub = get_mask(df_sub_filtered_base, curr_year, curr_month, agg_mode)
                 mask_prev_sub = get_mask(df_sub_filtered_base, prev_year, prev_month, agg_mode)
                     
-                # 🟢 [수정 2] 세부 업종별 판매량 비교 (막대그래프) 복구
                 if not df_sub_filtered_base.empty and grp_col in df_sub_filtered_base.columns:
                     curr_ind_grp = df_sub_filtered_base[mask_curr_sub].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: curr_name})
                     prev_ind_grp = df_sub_filtered_base[mask_prev_sub].groupby(grp_col, as_index=False)[val_col].sum().rename(columns={val_col: prev_name})
