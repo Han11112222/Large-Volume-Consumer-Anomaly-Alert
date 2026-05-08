@@ -331,7 +331,8 @@ if df_csv.empty and 'merged_csv_df' in st.session_state:
     
 if not df_csv.empty:
     if "사용량(mj)" in df_csv.columns: df_csv["사용량(mj)"] = df_csv["사용량(mj)"].apply(clean_korean_finance_number)
-    if "사용량(m3)" in df_csv.columns: df_csv["사용량(m3)"].apply(clean_korean_finance_number)
+    # [버그 수정] 변수 할당이 누락되어 있던 것을 올바르게 수정 완료!
+    if "사용량(m3)" in df_csv.columns: df_csv["사용량(m3)"] = df_csv["사용량(m3)"].apply(clean_korean_finance_number)
         
 comments_db = load_comments_db()
         
@@ -552,7 +553,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                         idx_int = int(idx_str)
                                         if idx_int < len(alarm_df):
                                             selected_indices.append(idx_int)
-                                        
+                                            
                             if selected_indices:
                                 map_df = alarm_df.iloc[selected_indices].copy()
                             else:
@@ -577,8 +578,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             start_lat, start_lon = 35.8660194, 128.5332943
                             
                             if selected_indices:
-                                # 🟢 [수정됨] 이름표가 부여된 버튼으로 수정 완료 (에러 방지)
-                                draw_route = st.button("🚗 선택 업체 최적 동선(실제 도로) 그리기", use_container_width=True, key=f"draw_route_btn_{key_sfx}")
+                                # [문법 업데이트] width="stretch" 적용 완료
+                                draw_route = st.button("🚗 선택 업체 최적 동선(실제 도로) 그리기", width="stretch", key=f"draw_route_btn_{key_sfx}")
                                 
                                 start_pt_data = pd.DataFrame([{
                                     "lon": start_lon,
@@ -697,11 +698,12 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                 
                             fmt_dict = {prev_col_name: "{:,.0f}", curr_col_name: "{:,.0f}", "증감": "{:,.0f}", "증감률(%)": "{:,.1f}"}
                             
+                            # [문법 업데이트] width="stretch" 적용 완료
                             st.data_editor(
                                 center_style(df_show.style.format(fmt_dict).apply(highlight_map_total, axis=1)),
                                 column_config={"선택": st.column_config.CheckboxColumn("선택", default=False)},
                                 disabled=[c for c in df_show.columns if c != "선택"],
-                                use_container_width=True,
+                                width="stretch",
                                 hide_index=True,
                                 key=editor_key
                             )
@@ -818,7 +820,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 fig_c.update_layout(margin=dict(t=30, b=20, l=40, r=10), height=420, showlegend=False) 
                 fig_c.update_yaxes(range=yaxis_range)
                 fig_c.add_trace(go.Bar(x=[f"{prev_name}<br>실적", f"{curr_name}<br>실적"], y=[sum_prev, sum_act], marker_color=[COLOR_PREV, COLOR_ACT], text=[f"{sum_prev:,.0f}", f"{sum_act:,.0f}"], textposition='auto', textfont=dict(size=14)))
-                st.plotly_chart(fig_c, use_container_width=True)
+                # [문법 업데이트] width="stretch" 적용 완료
+                st.plotly_chart(fig_c, width="stretch")
                 
             with col_m:
                 st.markdown(f"**■ 월별 실적 추이 (YoY)** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
@@ -828,7 +831,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 
                 fig_m.add_trace(go.Bar(x=months_list, y=vals_prev, name=prev_legend, marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in vals_prev], textposition='auto', textfont=dict(size=11)))
                 fig_m.add_trace(go.Bar(x=months_list, y=vals_act, name=curr_legend, marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in vals_act], textposition='auto', textfont=dict(size=11)))
-                st.plotly_chart(fig_m, use_container_width=True)
+                # [문법 업데이트] width="stretch" 적용 완료
+                st.plotly_chart(fig_m, width="stretch")
 
             if not df_csv_tab.empty and val_col in df_csv_tab.columns:
                 if "상품명" in df_csv_tab.columns:
@@ -878,7 +882,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[prev_name], name=prev_name, marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in ind_comp_plot[prev_name]], textposition='auto', textfont=dict(size=11)))
                     fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[curr_name], name=curr_name, marker_color=colors_act, text=[f"{v:,.0f}" if v>0 else "" for v in ind_comp_plot[curr_name]], textposition='auto', textfont=dict(size=11)))
                     fig_ind.update_layout(barmode='group', xaxis_title="", yaxis_title=f"판매량({unit_str})", margin=dict(t=10, b=10, l=10, r=10), height=420, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                    st.plotly_chart(fig_ind, use_container_width=True)
+                    # [문법 업데이트] width="stretch" 적용 완료
+                    st.plotly_chart(fig_ind, width="stretch")
 
                 st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
 
@@ -920,7 +925,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             fig_cust_cum.update_layout(title=chart_title, margin=dict(t=50, b=20, l=40, r=10), height=350)
                             fig_cust_cum.add_trace(go.Bar(x=[prev_name, curr_name], y=[sum_prev_c, sum_cur_c], marker_color=[COLOR_PREV, COLOR_ACT], text=[f"{sum_prev_c:,.0f}", f"{sum_cur_c:,.0f}"], textposition='auto'))
                             fig_cust_cum.add_annotation(x=0.5, y=1.05, xref="paper", yref="paper", text=f"<b>{yoy_text}</b>", showarrow=False, font=dict(size=13, color="#d32f2f" if diff_val < 0 else "#1f77b4"), bgcolor="#f8f9fa", bordercolor="#d0d7e5", borderwidth=1, borderpad=4)
-                            st.plotly_chart(fig_cust_cum, use_container_width=True)
+                            # [문법 업데이트] width="stretch" 적용 완료
+                            st.plotly_chart(fig_cust_cum, width="stretch")
                             
                         with cc2:
                             fig_cust_mon = go.Figure()
@@ -939,7 +945,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             
                             fig_cust_mon.add_trace(go.Bar(x=months_list, y=prev_vals_c, name=prev_legend, marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in prev_vals_c], textposition='auto', textfont=dict(size=11)))
                             fig_cust_mon.add_trace(go.Bar(x=months_list, y=cur_vals_c, name=curr_legend, marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in cur_vals_c], textposition='auto', textfont=dict(size=11)))
-                            st.plotly_chart(fig_cust_mon, use_container_width=True)
+                            # [문법 업데이트] width="stretch" 적용 완료
+                            st.plotly_chart(fig_cust_mon, width="stretch")
 
         render_full_usage_report("산업용", "2", key_sfx, "ind")
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
@@ -962,8 +969,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             </style>
         """, unsafe_allow_html=True)
         
-        st.components.v1.html("""
+        # [문법 업데이트] st.components.v1.html 지원 중단 경고 대응 (st.html 도입)
+        st.html("""
             <button onclick="window.parent.print()" style="padding: 12px 20px; font-size: 16px; border-radius: 8px; background-color: #1e3a8a; color: white; border: none; cursor: pointer; width: 100%; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin: 2px;">
                 🖨️ 현재 화면 전체를 PDF로 다운로드 (인쇄)
             </button>
-        """, height=70)
+        """)
