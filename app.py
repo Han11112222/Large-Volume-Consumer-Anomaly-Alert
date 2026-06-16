@@ -331,7 +331,6 @@ if df_csv.empty and 'merged_csv_df' in st.session_state:
     
 if not df_csv.empty:
     if "사용량(mj)" in df_csv.columns: df_csv["사용량(mj)"] = df_csv["사용량(mj)"].apply(clean_korean_finance_number)
-    # [버그 수정] 변수 할당이 누락되어 있던 것을 올바르게 수정 완료!
     if "사용량(m3)" in df_csv.columns: df_csv["사용량(m3)"] = df_csv["사용량(m3)"].apply(clean_korean_finance_number)
         
 comments_db = load_comments_db()
@@ -399,6 +398,14 @@ for idx, rpt_tab in enumerate(rpt_tabs):
 
             df_csv_tab["연_csv"] = df_csv_tab["날짜_파싱"].dt.year
             df_csv_tab["월_csv"] = df_csv_tab["날짜_파싱"].dt.month
+            
+            # --- [수정된 부분] CSV 데이터 기준 최신 연월로 디폴트값 동적 업데이트 ---
+            csv_max_date = df_csv_tab["날짜_파싱"].max()
+            if pd.notna(csv_max_date):
+                if csv_max_date.year in years_available:
+                    default_y_index = years_available.index(csv_max_date.year)
+                default_m_index = int(csv_max_date.month - 1)
+            # -------------------------------------------------------------------------
         
         c_y, c_m, c_agg, c_empty = st.columns([1, 1, 2, 1])
         with c_y:
@@ -923,7 +930,11 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                         with cc1:
                             fig_cust_cum = go.Figure()
                             fig_cust_cum.update_layout(title=chart_title, margin=dict(t=50, b=20, l=40, r=10), height=350)
-                            fig_cust_cum.add_trace(go.Bar(x=[prev_name, curr_name], y=[sum_prev_c, sum_cur_c], marker_color=[COLOR_PREV, COLOR_ACT], text=[f"{sum_prev_c:,.0f}", f"{sum_cur_c:,.0f}"], textposition='auto'))
+                            
+                            # --- [수정된 부분] hovertemplate 추가 ---
+                            fig_cust_cum.add_trace(go.Bar(x=[prev_name, curr_name], y=[sum_prev_c, sum_cur_c], marker_color=[COLOR_PREV, COLOR_ACT], text=[f"{sum_prev_c:,.0f}", f"{sum_cur_c:,.0f}"], textposition='auto', hovertemplate="%{x}: %{y:,.0f}<extra></extra>"))
+                            # ----------------------------------------
+                            
                             fig_cust_cum.add_annotation(x=0.5, y=1.05, xref="paper", yref="paper", text=f"<b>{yoy_text}</b>", showarrow=False, font=dict(size=13, color="#d32f2f" if diff_val < 0 else "#1f77b4"), bgcolor="#f8f9fa", bordercolor="#d0d7e5", borderwidth=1, borderpad=4)
                             # [문법 업데이트] width="stretch" 적용 완료
                             st.plotly_chart(fig_cust_cum, width="stretch")
@@ -943,8 +954,11 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                     else:
                                         prev_vals_c.append(c_data[(c_data['연_csv']==curr_year-1)&(c_data['월_csv']==12)][val_col].sum())
                             
-                            fig_cust_mon.add_trace(go.Bar(x=months_list, y=prev_vals_c, name=prev_legend, marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in prev_vals_c], textposition='auto', textfont=dict(size=11)))
-                            fig_cust_mon.add_trace(go.Bar(x=months_list, y=cur_vals_c, name=curr_legend, marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in cur_vals_c], textposition='auto', textfont=dict(size=11)))
+                            # --- [수정된 부분] hovertemplate 추가 ---
+                            fig_cust_mon.add_trace(go.Bar(x=months_list, y=prev_vals_c, name=prev_legend, marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v>0 else "" for v in prev_vals_c], textposition='auto', textfont=dict(size=11), hovertemplate="%{x}월: %{y:,.0f}<extra></extra>"))
+                            fig_cust_mon.add_trace(go.Bar(x=months_list, y=cur_vals_c, name=curr_legend, marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v>0 else "" for v in cur_vals_c], textposition='auto', textfont=dict(size=11), hovertemplate="%{x}월: %{y:,.0f}<extra></extra>"))
+                            # ----------------------------------------
+                            
                             # [문법 업데이트] width="stretch" 적용 완료
                             st.plotly_chart(fig_cust_mon, width="stretch")
 
