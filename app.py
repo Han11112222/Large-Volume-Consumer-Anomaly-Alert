@@ -664,7 +664,7 @@ for tab_idx, rpt_tab in enumerate(rpt_tabs):
                 fc.add_trace(go.Bar(x=[f"{pn}<br>실적",f"{cn}<br>실적"],y=[s_prev,s_act],
                     marker_color=[COLOR_PREV,COLOR_ACT],text=[f"{s_prev:,.0f}",f"{s_act:,.0f}"],
                     textposition='auto',textfont=dict(size=14)))
-                st.plotly_chart(fc,width="stretch")
+                st.plotly_chart(fc, key=f"fc_{usage_name}_{ks}", width="stretch")
             with c2:
                 st.markdown(f"**■ 월별 실적 추이** <span style='float:right;font-size:13px;font-weight:normal;color:gray;'>(단위:{unit_str})</span>",unsafe_allow_html=True)
                 fm=go.Figure()
@@ -676,7 +676,7 @@ for tab_idx, rpt_tab in enumerate(rpt_tabs):
                     text=[f"{v:,.0f}" if v>0 else "" for v in vp],textposition='auto',textfont=dict(size=11)))
                 fm.add_trace(go.Bar(x=ml,y=va,name=cl2,marker_color=COLOR_ACT,
                     text=[f"{v:,.0f}" if v>0 else "" for v in va],textposition='auto',textfont=dict(size=11)))
-                st.plotly_chart(fm,width="stretch")
+                st.plotly_chart(fm, key=f"fm_{usage_name}_{ks}", width="stretch")
 
             if not df_csv_tab.empty and val_col in df_csv_tab.columns:
                 ps3 = df_csv_tab["상품명"].astype(str).str.replace(r"\s+","",regex=True) if "상품명" in df_csv_tab.columns else pd.Series([""]*len(df_csv_tab),index=df_csv_tab.index)
@@ -709,7 +709,7 @@ for tab_idx, rpt_tab in enumerate(rpt_tabs):
                     fi.update_layout(barmode='group',xaxis_title="",yaxis_title=f"판매량({unit_str})",
                         margin=dict(t=10,b=10,l=10,r=10),height=420,
                         legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1))
-                    st.plotly_chart(fi,width="stretch")
+                    st.plotly_chart(fi, key=f"fi_{usage_name}_{ks}", width="stretch")
 
                 st.markdown("<hr style='border-top:1px dashed #ccc;margin:30px 0;'>",unsafe_allow_html=True)
                 st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트** <span style='float:right;font-size:13px;font-weight:normal;color:gray;'>(단위:{unit_str})</span>",unsafe_allow_html=True)
@@ -742,7 +742,7 @@ for tab_idx, rpt_tab in enumerate(rpt_tabs):
                             fg.add_annotation(x=0.5,y=1.05,xref="paper",yref="paper",text=f"<b>{yt}</b>",
                                 showarrow=False,font=dict(size=13,color="#d32f2f" if dv<0 else "#1f77b4"),
                                 bgcolor="#f8f9fa",bordercolor="#d0d7e5",borderwidth=1,borderpad=4)
-                            st.plotly_chart(fg,width="stretch")
+                            st.plotly_chart(fg, key=f"fg_{usage_name}_{ks}_{sel}", width="stretch")
                         with x2:
                             fm2=go.Figure()
                             fm2.update_layout(title=f"'{sel}' 월별 사용량 추이",barmode='group',
@@ -763,7 +763,7 @@ for tab_idx, rpt_tab in enumerate(rpt_tabs):
                             fm2.add_trace(go.Bar(x=ml,y=cvc,name=cl2,marker_color=COLOR_ACT,
                                 text=[f"{v:,.0f}" if v>0 else "" for v in cvc],textposition='auto',textfont=dict(size=11),
                                 hovertemplate="%{x}월: %{y:,.0f}<extra></extra>"))
-                            st.plotly_chart(fm2,width="stretch")
+                            st.plotly_chart(fm2, key=f"fm2_{usage_name}_{ks}_{sel}", width="stretch")
 
         render_usage("산업용","2",key_sfx)
         st.markdown("<hr style='margin:50px 0;border-top:2px solid #ccc;'>",unsafe_allow_html=True)
