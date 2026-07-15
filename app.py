@@ -329,22 +329,8 @@ if excel_bytes:
 # CSV 원본 로드 (단위 변환 없이)
 df_csv_raw = pd.DataFrame()
 if src_csv == "레포 파일 사용":
-    repo_dir = Path(__file__).parent
-    all_csvs = sorted(list(set(
-        list(repo_dir.glob("가정용외_*.csv")) + list(repo_dir.glob("*가정용외_*.csv"))
-    )))
-    csv_list = []
-    for p in all_csvs:
-        for enc in ["utf-8-sig","cp949","utf-8"]:
-            try:
-                df = pd.read_csv(p, encoding=enc, thousands=',')
-                df.columns = df.columns.str.strip()
-                csv_list.append(df); break
-            except Exception: pass
-    if csv_list:
-        df_csv_raw = pd.concat(csv_list, ignore_index=True)
-    if df_csv_raw.empty:
-        df_csv_raw = load_csvs_via_github_api()
+    # ✅ 항상 GitHub API로 로드 (glob은 Streamlit Cloud에서 불안정)
+    df_csv_raw = load_csvs_via_github_api()
 
 if df_csv_raw.empty and 'merged_csv_df' in st.session_state:
     df_csv_raw = st.session_state['merged_csv_df'].copy()
