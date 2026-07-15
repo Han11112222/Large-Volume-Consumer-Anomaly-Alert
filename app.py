@@ -326,6 +326,16 @@ with st.sidebar:
             if 'merged_csv_df' in st.session_state:
                 del st.session_state['merged_csv_df']
 
+    # GitHub API 로드 결과 표시
+    if 'github_csv_loaded' in st.session_state:
+        names = st.session_state['github_csv_loaded']
+        st.success(f"✅ GitHub CSV {len(names)}개 로드 완료")
+        with st.expander("로드된 파일 목록 보기"):
+            for n in names:
+                st.write(f"- {n}")
+    if 'github_csv_error' in st.session_state:
+        st.error(f"GitHub 로드 오류: {st.session_state['github_csv_error']}")
+
     st.markdown("---")
     st.subheader("🗺️ 3. 지도 위경도 데이터 (CSV)")
     src_coord = st.radio("위경도 데이터 소스", ["레포 파일(깃허브) 사용", "CSV 업로드(.csv)"], index=0, key="coord_src")
@@ -366,9 +376,13 @@ def load_csvs_from_github() -> pd.DataFrame:
     glob 방식보다 안정적으로 모든 파일을 가져옵니다.
     """
     try:
-        token = st.secrets.get("GITHUB_TOKEN", "")
+        token = ""
+        try:
+            token = st.secrets.get("GITHUB_TOKEN", "")
+        except Exception:
+            pass
+
         if not token:
-            st.warning("GITHUB_TOKEN이 secrets에 없습니다. CSV를 GitHub에서 읽을 수 없습니다.")
             return pd.DataFrame()
 
         g = Github(token)
@@ -384,27 +398,29 @@ def load_csvs_from_github() -> pd.DataFrame:
         loaded_names = []
         csv_list = []
         for file_content in csv_files:
-            raw_bytes = file_content.decoded_content
-            for enc in ["utf-8-sig", "cp949", "utf-8"]:
-                try:
-                    temp_df = pd.read_csv(io.BytesIO(raw_bytes), encoding=enc, thousands=',')
-                    temp_df.columns = temp_df.columns.str.strip()
-                    csv_list.append(temp_df)
-                    loaded_names.append(file_content.name)
-                    break
-                except Exception:
-                    pass
+            try:
+                raw_bytes = file_content.decoded_content
+                for enc in ["utf-8-sig", "cp949", "utf-8"]:
+                    try:
+                        temp_df = pd.read_csv(io.BytesIO(raw_bytes), encoding=enc, thousands=',')
+                        temp_df.columns = temp_df.columns.str.strip()
+                        csv_list.append(temp_df)
+                        loaded_names.append(file_content.name)
+                        break
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
         if csv_list:
-            st.sidebar.success(f"✅ GitHub에서 CSV {len(csv_list)}개 로드 완료\n\n" +
-                               "\n".join(f"- {n}" for n in loaded_names))
+            # session_state에 로드 결과 저장 (사이드바에서 표시용)
+            st.session_state['github_csv_loaded'] = loaded_names
             return pd.concat(csv_list, ignore_index=True)
         else:
-            st.warning("GitHub에서 가정용외 CSV 파일을 찾지 못했습니다.")
             return pd.DataFrame()
 
     except Exception as e:
-        st.error(f"GitHub CSV 로드 오류: {e}")
+        st.session_state['github_csv_error'] = str(e)
         return pd.DataFrame()
 
 if src_csv == "레포 파일 사용":
