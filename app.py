@@ -602,9 +602,10 @@ for tab_idx, rpt_tab in enumerate(rpt_tabs):
             elif not df_csv_tab.empty and val_col in df_csv_tab.columns:
                 ps2 = df_csv_tab["상품명"].astype(str).str.replace(r"\s+","",regex=True) if "상품명" in df_csv_tab.columns else pd.Series([""]*len(df_csv_tab),index=df_csv_tab.index)
                 if usage_name=="산업용":
-                    df_u = df_csv_tab[ps2=="산업용"].copy()
+                    df_u = df_csv_tab[(df_csv_tab["용도"]=="산업용") | (ps2=="산업용")].copy()
                 else:
-                    df_u = df_csv_tab[ps2.isin(["냉난방용(업무)","업무난방용","주한미군"])].copy()
+                    mask_biz = (df_csv_tab["용도"]=="업무용") | ps2.isin(["냉난방용(업무)","업무난방용","주한미군"])
+                    df_u = df_csv_tab[mask_biz].copy()
                 p_curr = df_u[df_u["연_csv"]==curr_year].groupby("월_csv")[val_col].sum()
                 p_prev = df_u[df_u["연_csv"]==prev_year].groupby("월_csv")[val_col].sum()
 
@@ -682,9 +683,10 @@ for tab_idx, rpt_tab in enumerate(rpt_tabs):
             if not df_csv_tab.empty and val_col in df_csv_tab.columns:
                 ps3 = df_csv_tab["상품명"].astype(str).str.replace(r"\s+","",regex=True) if "상품명" in df_csv_tab.columns else pd.Series([""]*len(df_csv_tab),index=df_csv_tab.index)
                 if usage_name=="산업용":
-                    dsb=df_csv_tab[ps3=="산업용"].copy(); gc="업종"
+                    dsb=df_csv_tab[(df_csv_tab["용도"]=="산업용") | (ps3=="산업용")].copy(); gc="업종"
                 else:
-                    dsb=df_csv_tab[ps3.isin(["냉난방용(업무)","업무난방용","주한미군"])].copy()
+                    mask_biz2 = (df_csv_tab["용도"]=="업무용") | ps3.isin(["냉난방용(업무)","업무난방용","주한미군"])
+                    dsb=df_csv_tab[mask_biz2].copy()
                     if "업종분류" in dsb.columns: dsb["업종"]=dsb["업종분류"]
                     gc="업종"
 
