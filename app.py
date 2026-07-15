@@ -235,33 +235,34 @@ def get_mask(df, y, m, agg):
 # GitHub API로 CSV 다운로드
 # ─────────────────────────────────────────────────────────
 def load_csvs_via_github_api() -> pd.DataFrame:
-    try:
-        token = ""
-        try: token = st.secrets.get("GITHUB_TOKEN", "")
-        except Exception: pass
-        headers = {"Authorization": f"token {token}"} if token else {}
-        resp = requests.get(f"https://api.github.com/repos/{REPO_NAME}/contents/", headers=headers, timeout=10)
-        if resp.status_code != 200: return pd.DataFrame()
-        csv_files = sorted(
-            [f for f in resp.json() if f["name"].endswith(".csv") and "가정용외" in f["name"]],
-            key=lambda x: x["name"]
-        )
-        csv_list, loaded_names = [], []
-        for f in csv_files:
-            try:
-                r = requests.get(f["download_url"], headers=headers, timeout=15)
-                if r.status_code == 200:
-                    df = load_safe_csv(r.content)
-                    if not df.empty:
-                        csv_list.append(df)
-                        loaded_names.append(f["name"])
-            except Exception:
-                pass
-        if csv_list:
-            st.session_state["github_csv_loaded"] = loaded_names
-            return pd.concat(csv_list, ignore_index=True)
-    except Exception as e:
-        st.session_state["github_csv_error"] = str(e)
+    """
+    GitHub Raw URL로 파일명을 직접 생성해서 다운로드.
+    API 호출 없이 public repo에서 직접 다운로드하므로 토큰 불필요.
+    """
+    # 2025년 1~12월, 2026년 1~12월 파일명 생성
+    filenames = []
+    for y in [2025, 2026]:
+        for m in range(1, 13):
+            filenames.append(f"가정용외_{y}{m:02d}.csv")
+
+    csv_list, loaded_names = [], []
+    for fname in filenames:
+        url = f"{GITHUB_RAW_BASE}/{fname}"
+        try:
+            r = requests.get(url, timeout=15)
+            if r.status_code == 200:
+                df = load_safe_csv(r.content)
+                if not df.empty:
+                    csv_list.append(df)
+                    loaded_names.append(fname)
+        except Exception:
+            pass
+
+    if csv_list:
+        st.session_state["github_csv_loaded"] = loaded_names
+        return pd.concat(csv_list, ignore_index=True)
+
+    st.session_state["github_csv_error"] = "GitHub Raw URL로 CSV를 불러오지 못했습니다."
     return pd.DataFrame()
 
 # ─────────────────────────────────────────────────────────
