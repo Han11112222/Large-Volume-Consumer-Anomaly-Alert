@@ -360,25 +360,76 @@ if excel_bytes is not None:
 # ✅ CSV 원본 로드 (단위 변환 없이, 숫자 정제만)
 df_csv_raw = pd.DataFrame()
 
+def load_csvs_from_github() -> pd.DataFrame:
+    """
+    GitHub API를 통해 레포의 가정용외_*.csv 파일을 모두 읽어 합칩니다.
+    glob 방식보다 안정적으로 모든 파일을 가져옵니다.
+    """
+    try:
+        token = st.secrets.get("GITHUB_TOKEN", "")
+        if not token:
+            st.warning("GITHUB_TOKEN이 secrets에 없습니다. CSV를 GitHub에서 읽을 수 없습니다.")
+            return pd.DataFrame()
+
+        g = Github(token)
+        repo = g.get_repo(REPO_NAME)
+        contents = repo.get_contents("")  # 루트 디렉토리 파일 목록
+
+        csv_files = [
+            c for c in contents
+            if c.name.endswith(".csv") and "가정용외" in c.name
+        ]
+        csv_files = sorted(csv_files, key=lambda c: c.name)
+
+        loaded_names = []
+        csv_list = []
+        for file_content in csv_files:
+            raw_bytes = file_content.decoded_content
+            for enc in ["utf-8-sig", "cp949", "utf-8"]:
+                try:
+                    temp_df = pd.read_csv(io.BytesIO(raw_bytes), encoding=enc, thousands=',')
+                    temp_df.columns = temp_df.columns.str.strip()
+                    csv_list.append(temp_df)
+                    loaded_names.append(file_content.name)
+                    break
+                except Exception:
+                    pass
+
+        if csv_list:
+            st.sidebar.success(f"✅ GitHub에서 CSV {len(csv_list)}개 로드 완료\n\n" +
+                               "\n".join(f"- {n}" for n in loaded_names))
+            return pd.concat(csv_list, ignore_index=True)
+        else:
+            st.warning("GitHub에서 가정용외 CSV 파일을 찾지 못했습니다.")
+            return pd.DataFrame()
+
+    except Exception as e:
+        st.error(f"GitHub CSV 로드 오류: {e}")
+        return pd.DataFrame()
+
 if src_csv == "레포 파일 사용":
+    # ① 먼저 로컬 경로(glob) 시도
     repo_dir = Path(__file__).parent
-    all_csvs = list(repo_dir.glob("*가정용외*.csv")) + list(repo_dir.glob("가정용외*.csv"))
-    all_csvs = list(set(all_csvs))
+    all_csvs = list(set(
+        list(repo_dir.glob("*가정용외*.csv")) +
+        list(repo_dir.glob("가정용외*.csv"))
+    ))
     csv_list = []
-    for p in all_csvs:
-        try:
-            temp_df = pd.read_csv(p, encoding="utf-8-sig", thousands=',')
-            temp_df.columns = temp_df.columns.str.strip()
-            csv_list.append(temp_df)
-        except:
+    for p in sorted(all_csvs):
+        for enc in ["utf-8-sig", "cp949", "utf-8"]:
             try:
-                temp_df = pd.read_csv(p, encoding="cp949", thousands=',')
+                temp_df = pd.read_csv(p, encoding=enc, thousands=',')
                 temp_df.columns = temp_df.columns.str.strip()
                 csv_list.append(temp_df)
-            except:
+                break
+            except Exception:
                 pass
     if csv_list:
         df_csv_raw = pd.concat(csv_list, ignore_index=True)
+
+    # ② 로컬에서 못 찾으면 GitHub API로 로드
+    if df_csv_raw.empty:
+        df_csv_raw = load_csvs_from_github()
 
 if df_csv_raw.empty and 'merged_csv_df' in st.session_state:
     df_csv_raw = st.session_state['merged_csv_df'].copy()
