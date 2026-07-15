@@ -5,3 +5,5 @@ matplotlib
 plotly
 openpyxl
 PyGithub
+pydeck
+requests
