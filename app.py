@@ -321,6 +321,42 @@ def get_unit_series(df: pd.DataFrame, unit_str: str) -> pd.Series:
 # ─────────────────────────────────────────────────────────
 st.title("📊 대용량 수요처 이상 감지 대시보드")
 
+# ── 디버그: 파일 로드 현황 확인 (문제 해결 후 제거 예정) ──
+with st.expander("🔍 [디버그] CSV 파일 로드 현황 확인 (클릭하여 펼치기)"):
+    repo_dir_debug = Path(__file__).parent
+    st.write(f"**앱 실행 경로:** `{repo_dir_debug}`")
+    
+    # glob으로 찾은 파일 목록
+    glob_files = sorted(list(set(
+        list(repo_dir_debug.glob("가정용외_*.csv")) +
+        list(repo_dir_debug.glob("*가정용외_*.csv"))
+    )))
+    st.write(f"**glob으로 찾은 CSV 파일 수: {len(glob_files)}개**")
+    for p in glob_files:
+        st.write(f"- `{p.name}`")
+    
+    # GitHub API로 찾은 파일 목록
+    st.write("---")
+    try:
+        token = ""
+        try:
+            token = st.secrets.get("GITHUB_TOKEN", "")
+        except Exception:
+            pass
+        headers = {"Authorization": f"token {token}"} if token else {}
+        api_url = f"https://api.github.com/repos/{REPO_NAME}/contents/"
+        resp = requests.get(api_url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            all_files = resp.json()
+            gh_csvs = [f["name"] for f in all_files if f["name"].endswith(".csv") and "가정용외" in f["name"]]
+            st.write(f"**GitHub API로 찾은 CSV 파일 수: {len(gh_csvs)}개**")
+            for n in sorted(gh_csvs):
+                st.write(f"- `{n}`")
+        else:
+            st.write(f"GitHub API 응답 오류: {resp.status_code}")
+    except Exception as e:
+        st.write(f"GitHub API 호출 오류: {e}")
+
 with st.sidebar:
     st.header("📂 데이터 및 설정")
 
