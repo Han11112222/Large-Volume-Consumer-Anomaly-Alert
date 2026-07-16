@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 import pydeck as pdk
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from urllib.parse import quote
 from github import Github
 
@@ -953,8 +954,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             }
             </style>
         """, unsafe_allow_html=True)
-        st.html("""
+        components.html("""
             <button onclick="window.parent.print()" style="padding: 12px 20px; font-size: 16px; border-radius: 8px; background-color: #1e3a8a; color: white; border: none; cursor: pointer; width: 100%; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin: 2px;">
                 🖨️ 현재 화면 전체를 PDF로 다운로드 (인쇄)
             </button>
-        """)
+        """, height=60)
