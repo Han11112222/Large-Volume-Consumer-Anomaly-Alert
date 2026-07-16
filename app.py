@@ -372,11 +372,29 @@ if excel_bytes is not None:
     sheets_rpt = load_all_sheets(excel_bytes)
     long_dict_rpt = build_long_dict(sheets_rpt)
 
-# ✅ [수정2] CSV 로드: 레포 파일이면 GitHub Raw URL로 직접 다운로드
 df_csv = pd.DataFrame()
 
 if src_csv == "레포 파일 사용":
-    df_csv = load_csvs_from_github_raw()
+    repo_dir = Path(__file__).parent
+    all_csvs = list(repo_dir.glob("*가정용외*.csv")) + list(repo_dir.glob("가정용외*.csv"))
+    all_csvs = list(set(all_csvs))
+    csv_list = []
+    for p in all_csvs:
+        try:
+            temp_df = pd.read_csv(p, encoding="utf-8-sig", thousands=',')
+            temp_df.columns = temp_df.columns.str.strip()
+            csv_list.append(temp_df)
+        except:
+            try:
+                temp_df = pd.read_csv(p, encoding="cp949", thousands=',')
+                temp_df.columns = temp_df.columns.str.strip()
+                csv_list.append(temp_df)
+            except: pass
+    if csv_list:
+        df_csv = pd.concat(csv_list, ignore_index=True)
+    # glob 실패 시 GitHub Raw URL로 fallback
+    if df_csv.empty:
+        df_csv = load_csvs_from_github_raw()
 
 if df_csv.empty and 'merged_csv_df' in st.session_state:
     df_csv = st.session_state['merged_csv_df'].copy()
@@ -541,11 +559,21 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 mask_curr_map = get_mask(df_map_filtered, curr_year, curr_month, agg_mode)
                 mask_prev_map = get_mask(df_map_filtered, prev_year, prev_month, agg_mode)
 
-                map_curr = df_map_filtered[mask_curr_map].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "당해년도"})
-                map_prev = df_map_filtered[mask_prev_map].groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "전년도"})
+                # 고객명 기준으로 집계 후 대표 도로명주소 추출
+                def agg_with_addr(df_filtered):
+                    grp = df_filtered.groupby(["고객명", "용도_태그"], as_index=False)[val_col].sum()
+                    # 고객별 대표 주소: 사용량 가장 많은 주소 선택
+                    addr = (df_filtered.groupby(["고객명", "도로명주소"])[val_col]
+                            .sum().reset_index()
+                            .sort_values(val_col, ascending=False)
+                            .drop_duplicates("고객명")[["고객명", "도로명주소"]])
+                    return pd.merge(grp, addr, on="고객명", how="left")
+
+                map_curr = agg_with_addr(df_map_filtered[mask_curr_map]).rename(columns={val_col: "당해년도"})
+                map_prev = df_map_filtered[mask_prev_map].groupby(["고객명", "용도_태그"], as_index=False)[val_col].sum().rename(columns={val_col: "전년도"})
 
                 if not map_curr.empty and not map_prev.empty:
-                    df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소", "용도_태그"], how="inner").fillna(0)
+                    df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "용도_태그"], how="inner").fillna(0)
                     df_map_merged["증감률(%)"] = np.where(df_map_merged["전년도"] > 0, ((df_map_merged["당해년도"] - df_map_merged["전년도"]) / df_map_merged["전년도"]) * 100, 0)
                     alarm_df = df_map_merged[df_map_merged["증감률(%)"] <= -5].copy()
 
@@ -723,10 +751,10 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                         csv_products = pd.Series([""] * len(df_csv_tab))
 
                     if usage_name == "산업용":
-                        df_u_csv = df_csv_tab[(df_csv_tab["용도"] == "산업용") | (csv_products == "산업용")].copy()
+                        df_u_csv = df_csv_tab[csv_products == "산업용"].copy()
                     else:
                         valid_biz_nospaces = ["냉난방용(업무)", "업무난방용", "주한미군"]
-                        df_u_csv = df_csv_tab[(df_csv_tab["용도"] == "업무용") | (csv_products.isin(valid_biz_nospaces))].copy()
+                        df_u_csv = df_csv_tab[csv_products.isin(valid_biz_nospaces)].copy()
 
                     p_curr_act_all = df_u_csv[df_u_csv["연_csv"] == curr_year].groupby("월_csv")[val_col].sum()
                     p_prev_act_all = df_u_csv[df_u_csv["연_csv"] == prev_year].groupby("월_csv")[val_col].sum()
@@ -826,11 +854,11 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     csv_products = pd.Series([""] * len(df_csv_tab))
 
                 if usage_name == "산업용":
-                    df_sub_filtered_base = df_csv_tab[(df_csv_tab["용도"] == "산업용") | (csv_products == "산업용")].copy()
+                    df_sub_filtered_base = df_csv_tab[csv_products == "산업용"].copy()
                     grp_col = "업종"
                 else:
                     valid_biz_nospaces = ["냉난방용(업무)", "업무난방용", "주한미군"]
-                    df_sub_filtered_base = df_csv_tab[(df_csv_tab["용도"] == "업무용") | (csv_products.isin(valid_biz_nospaces))].copy()
+                    df_sub_filtered_base = df_csv_tab[csv_products.isin(valid_biz_nospaces)].copy()
                     if "업종분류" in df_sub_filtered_base.columns:
                         df_sub_filtered_base["업종"] = df_sub_filtered_base["업종분류"]
                     grp_col = "업종"
