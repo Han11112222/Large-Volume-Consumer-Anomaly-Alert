@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 import pydeck as pdk
 import requests
 import streamlit as st
+from urllib.parse import quote
 from github import Github
 
 
@@ -272,8 +273,7 @@ def load_csvs_from_github_raw() -> pd.DataFrame:
         for y in [2025, 2026]:
             for m in range(1, 13):
                 fname = f"가정용외_{y}{m:02d}.csv"
-                from urllib.parse import quote
-                url = f"https://raw.githubusercontent.com/{REPO_NAME}/main/{quote(fname)}"
+                url = f"https://raw.githubusercontent.com/{REPO_NAME}/main/{fname}"
                 filenames.append((fname, url))
 
     csv_list = []
@@ -608,7 +608,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             start_lat, start_lon = 35.8660194, 128.5332943
 
                             if selected_indices:
-                                draw_route = st.button("🚗 선택 업체 최적 동선(실제 도로) 그리기", width="stretch", key=f"draw_route_btn_{key_sfx}")
+                                draw_route = st.button("🚗 선택 업체 최적 동선(실제 도로) 그리기", use_container_width=True, key=f"draw_route_btn_{key_sfx}")
                                 start_pt_data = pd.DataFrame([{
                                     "lon": start_lon, "lat": start_lat,
                                     "tooltip": "<b>🏢 대성에너지 서부지사 (출발지)</b><br>대구광역시 서구 와룡로73길 30",
@@ -693,7 +693,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                 center_style(df_show.style.format(fmt_dict).apply(highlight_map_total, axis=1)),
                                 column_config={"선택": st.column_config.CheckboxColumn("선택", default=False)},
                                 disabled=[c for c in df_show.columns if c != "선택"],
-                                width="stretch", hide_index=True, key=editor_key
+                                hide_index=True, key=editor_key
                             )
                         else:
                             st.error("매핑된 위경도 좌표가 없어 지도를 표시할 수 없습니다.")
@@ -803,7 +803,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 fig_c.add_trace(go.Bar(x=[f"{prev_name}<br>실적", f"{curr_name}<br>실적"], y=[sum_prev, sum_act],
                     marker_color=[COLOR_PREV, COLOR_ACT], text=[f"{sum_prev:,.0f}", f"{sum_act:,.0f}"],
                     textposition='auto', textfont=dict(size=14)))
-                st.plotly_chart(fig_c, key=f"fig_c_{usage_name}_{key_sfx}", width="stretch")
+                st.plotly_chart(fig_c, key=f"fig_c_{usage_name}_{key_sfx}", use_container_width=True)
 
             with col_m:
                 st.markdown(f"**■ 월별 실적 추이 (YoY)** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
@@ -816,7 +816,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     text=[f"{v:,.0f}" if v>0 else "" for v in vals_prev], textposition='auto', textfont=dict(size=11)))
                 fig_m.add_trace(go.Bar(x=months_list, y=vals_act, name=curr_legend, marker_color=COLOR_ACT,
                     text=[f"{v:,.0f}" if v>0 else "" for v in vals_act], textposition='auto', textfont=dict(size=11)))
-                st.plotly_chart(fig_m, key=f"fig_m_{usage_name}_{key_sfx}", width="stretch")
+                st.plotly_chart(fig_m, key=f"fig_m_{usage_name}_{key_sfx}", use_container_width=True)
 
             if not df_csv_tab.empty and val_col in df_csv_tab.columns:
                 if "상품명" in df_csv_tab.columns:
@@ -866,7 +866,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     fig_ind.update_layout(barmode='group', xaxis_title="", yaxis_title=f"판매량({unit_str})",
                         margin=dict(t=10, b=10, l=10, r=10), height=420,
                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                    st.plotly_chart(fig_ind, key=f"fig_ind_{usage_name}_{key_sfx}", width="stretch")
+                    st.plotly_chart(fig_ind, key=f"fig_ind_{usage_name}_{key_sfx}", use_container_width=True)
 
                 st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
                 st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
@@ -908,7 +908,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                 text=f"<b>{yoy_text}</b>", showarrow=False,
                                 font=dict(size=13, color="#d32f2f" if diff_val < 0 else "#1f77b4"),
                                 bgcolor="#f8f9fa", bordercolor="#d0d7e5", borderwidth=1, borderpad=4)
-                            st.plotly_chart(fig_cust_cum, key=f"fig_cum_{usage_name}_{key_sfx}_{sel_cust}", width="stretch")
+                            st.plotly_chart(fig_cust_cum, key=f"fig_cum_{usage_name}_{key_sfx}_{sel_cust}", use_container_width=True)
 
                         with cc2:
                             fig_cust_mon = go.Figure()
@@ -932,7 +932,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             fig_cust_mon.add_trace(go.Bar(x=months_list, y=cur_vals_c, name=curr_legend, marker_color=COLOR_ACT,
                                 text=[f"{v:,.0f}" if v>0 else "" for v in cur_vals_c], textposition='auto', textfont=dict(size=11),
                                 hovertemplate="%{x}월: %{y:,.0f}<extra></extra>"))
-                            st.plotly_chart(fig_cust_mon, key=f"fig_mon_{usage_name}_{key_sfx}_{sel_cust}", width="stretch")
+                            st.plotly_chart(fig_cust_mon, key=f"fig_mon_{usage_name}_{key_sfx}_{sel_cust}", use_container_width=True)
 
         render_full_usage_report("산업용", "2", key_sfx, "ind")
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
