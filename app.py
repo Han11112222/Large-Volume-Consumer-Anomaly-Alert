@@ -21,9 +21,6 @@ except ImportError:
     HAS_GITHUB = False
 
 
-# ─────────────────────────────────────────────────────────
-# 기본 설정
-# ─────────────────────────────────────────────────────────
 def set_korean_font():
     try:
         ttf = Path(__file__).parent / "NanumGothic-Regular.ttf"
@@ -40,12 +37,25 @@ st.set_page_config(page_title="대용량 수요처 이상 감지 대시보드", 
 DEFAULT_SALES_XLSX = "판매량(계획_실적).xlsx"
 REPO_NAME = "Han11112222/quarterly-sales-report"
 GITHUB_RAW_BASE = f"https://raw.githubusercontent.com/{REPO_NAME}/main"
-
-# ─────────────────────────────────────────────────────────
-# 코멘트 DB 저장
-# ─────────────────────────────────────────────────────────
 COMMENT_DB_FILE = "report_comments_db.json"
 
+USE_COL_TO_GROUP: Dict[str, str] = {
+    "취사용": "가정용", "개별난방용": "가정용", "중앙난방용": "가정용", "자가열전용": "가정용",
+    "일반용": "영업용",
+    "업무난방용": "업무용", "냉방용": "업무용", "주한미군": "업무용",
+    "산업용": "산업용",
+    "수송용(CNG)": "수송용", "수송용(BIO)": "수송용",
+    "열병합용": "열병합", "열병합용1": "열병합", "열병합용2": "열병합",
+    "연료전지용": "연료전지", "열전용설비용": "열전용설비용",
+}
+
+COLOR_ACT = "rgba(0, 150, 255, 1)"
+COLOR_PREV = "rgba(190, 190, 190, 1)"
+
+
+# ─────────────────────────────────────────────────────────
+# 코멘트 DB
+# ─────────────────────────────────────────────────────────
 def load_comments_db():
     if os.path.exists(COMMENT_DB_FILE):
         try:
@@ -71,30 +81,16 @@ def save_comments_db(db_data):
             content_string = json.dumps(db_data, ensure_ascii=False, indent=4)
             try:
                 contents = repo.get_contents(COMMENT_DB_FILE)
-                repo.update_file(contents.path, "Update comments via Streamlit App", content_string, contents.sha)
+                repo.update_file(contents.path, "Update comments", content_string, contents.sha)
             except Exception:
-                repo.create_file(COMMENT_DB_FILE, "Create comments db via Streamlit App", content_string)
+                repo.create_file(COMMENT_DB_FILE, "Create comments db", content_string)
     except Exception:
         pass
 
 
 # ─────────────────────────────────────────────────────────
-# 데이터 전처리 유틸
+# 유틸
 # ─────────────────────────────────────────────────────────
-USE_COL_TO_GROUP: Dict[str, str] = {
-    "취사용": "가정용", "개별난방용": "가정용", "중앙난방용": "가정용", "자가열전용": "가정용",
-    "일반용": "영업용",
-    "업무난방용": "업무용", "냉방용": "업무용", "주한미군": "업무용",
-    "산업용": "산업용",
-    "수송용(CNG)": "수송용", "수송용(BIO)": "수송용",
-    "열병합용": "열병합", "열병합용1": "열병합", "열병합용2": "열병합",
-    "연료전지용": "연료전지", "열전용설비용": "열전용설비용",
-}
-
-COLOR_ACT = "rgba(0, 150, 255, 1)"
-COLOR_PREV = "rgba(190, 190, 190, 1)"
-COLOR_ALARM = [211, 47, 47, 200]
-
 def clean_korean_finance_number(val):
     if pd.isna(val): return 0.0
     s = str(val).replace(",", "").strip()
@@ -108,28 +104,7 @@ def clean_korean_finance_number(val):
 def fmt_num_safe(v) -> str:
     if pd.isna(v): return "-"
     try: return f"{float(v):,.0f}"
-    except Exception: return "-"
-
-def center_style(styler):
-    styler = styler.set_properties(**{"text-align": "center"})
-    styler = styler.set_table_styles([
-        dict(selector="th", props=[("text-align", "center"), ("vertical-align", "middle"),
-                                    ("background-color", "#1e3a8a"), ("color", "#ffffff"), ("font-weight", "bold")]),
-        dict(selector="thead th", props=[("background-color", "#1e3a8a"), ("color", "#ffffff"), ("font-weight", "bold")]),
-        dict(selector="tbody tr th", props=[("background-color", "#1e3a8a"), ("color", "#ffffff"), ("font-weight", "bold")])
-    ])
-    return styler
-
-def highlight_subtotal(s):
-    is_subtotal = s.astype(str).str.contains('💡 소계|💡 총계|💡 합계')
-    return ['background-color: #1e3a8a; color: #ffffff; font-weight: bold;' if is_subtotal.any() else '' for _ in s]
-
-def _clean_base(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    if "Unnamed: 0" in out.columns: out = out.drop(columns=["Unnamed: 0"])
-    out["연"] = pd.to_numeric(out["연"], errors="coerce").astype("Int64")
-    out["월"] = pd.to_numeric(out["월"], errors="coerce").astype("Int64")
-    return out
+    except: return "-"
 
 def keyword_group(col: str) -> Optional[str]:
     c = str(col)
@@ -142,6 +117,13 @@ def keyword_group(col: str) -> Optional[str]:
     if any(k in c for k in ["취사용", "난방용", "자가열"]): return "가정용"
     if any(k in c for k in ["업무", "냉방", "주한미군"]): return "업무용"
     return None
+
+def _clean_base(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if "Unnamed: 0" in out.columns: out = out.drop(columns=["Unnamed: 0"])
+    out["연"] = pd.to_numeric(out["연"], errors="coerce").astype("Int64")
+    out["월"] = pd.to_numeric(out["월"], errors="coerce").astype("Int64")
+    return out
 
 def make_long(plan_df: pd.DataFrame, actual_df: pd.DataFrame) -> pd.DataFrame:
     plan_df = _clean_base(plan_df)
@@ -187,8 +169,7 @@ def build_long_dict(sheets: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     return long_dict
 
 def load_safe_csv(file_bytes) -> pd.DataFrame:
-    encodings = ["utf-8-sig", "cp949", "utf-8", "euc-kr"]
-    for enc in encodings:
+    for enc in ["utf-8-sig", "cp949", "utf-8", "euc-kr"]:
         try:
             df = pd.read_csv(io.BytesIO(file_bytes), encoding=enc, thousands=',')
             df.columns = df.columns.str.strip()
@@ -290,7 +271,7 @@ with st.sidebar:
     src_coord = st.radio("위경도 데이터 소스", ["레포 파일(깃허브) 사용", "CSV 업로드(.csv)"], index=0, key="coord_src")
     coord_df = pd.DataFrame()
     if src_coord == "CSV 업로드(.csv)":
-        up_coord = st.file_uploader("위경도 매핑 파일 업로드 (address_with_latlon.csv)", type=["csv"], key="coord_uploader")
+        up_coord = st.file_uploader("위경도 매핑 파일 업로드", type=["csv"], key="coord_uploader")
         if up_coord:
             coord_df = load_safe_csv(up_coord.getvalue())
     else:
@@ -307,7 +288,7 @@ with st.sidebar:
 
 
 # ─────────────────────────────────────────────────────────
-# 본문 로직
+# 본문
 # ─────────────────────────────────────────────────────────
 long_dict_rpt: Dict[str, pd.DataFrame] = {}
 if excel_bytes is not None:
@@ -345,7 +326,6 @@ if not df_csv.empty:
     if "사용량(m3)" in df_csv.columns: df_csv["사용량(m3)"] = df_csv["사용량(m3)"].apply(clean_korean_finance_number)
 
 comments_db = load_comments_db()
-
 rpt_tabs = st.tabs(["열량 기준 (GJ)", "부피 기준 (천m³)"])
 
 for idx, rpt_tab in enumerate(rpt_tabs):
@@ -431,7 +411,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("<hr style='margin: 10px 0 30px 0;'>", unsafe_allow_html=True)
 
         # ─────────────────────────────────────────────────────────
-        # 1. 이상 감지 업체 지도 모니터링
+        # 1. 지도
         # ─────────────────────────────────────────────────────────
         st.markdown(
             f"### 🗺️ 1. 대용량 수요처 이상 감지 모니터링 지도 "
@@ -457,7 +437,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         with map_c3:
             map_style_ui = st.radio("📍 지도 배경 테마", ["다크 모드 (기본)", "일반 도로 지도"], index=0, horizontal=True, key=f"map_style_{key_sfx}")
 
-        # ✅ 핵심 수정: Mapbox 대신 Carto 스타일 사용 (토큰 불필요)
+        # ✅ Carto 스타일 (Mapbox 토큰 불필요)
         deck_map_style = (
             "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
             if map_style_ui == "다크 모드 (기본)"
@@ -514,9 +494,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     alarm_df = df_map_merged[df_map_merged["증감률(%)"] <= -5].copy()
 
                     if alarm_df.empty:
-                        st.success(f"✅ 선택한 기간 내 YoY 5% 이상 하락한 {map_usage} 리스크 업체가 없습니다.")
+                        st.success(f"✅ 선택한 기간 내 5% 이상 하락한 {map_usage} 리스크 업체가 없습니다.")
                     else:
-                        st.warning(f"🚨 총 **{len(alarm_df)}**개의 {map_usage} 업체에서 5% 이상 하락 신호가 감지되었습니다. (지도에는 하락폭이 큰 주요 100개 업체를 표시합니다.)")
+                        st.warning(f"🚨 총 **{len(alarm_df)}**개의 {map_usage} 업체에서 5% 이상 하락 신호가 감지되었습니다.")
 
                         alarm_df["감소량"] = alarm_df["전년도"] - alarm_df["당해년도"]
                         alarm_df = alarm_df.sort_values(by="감소량", ascending=False).head(100).reset_index(drop=True)
@@ -574,8 +554,12 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             start_lat, start_lon = 35.8660194, 128.5332943
 
                             if selected_indices:
-                                draw_route = st.button("🚗 선택 업체 최적 동선(실제 도로) 그리기",
-                                                       use_container_width=True, key=f"draw_route_btn_{key_sfx}")
+                                # ✅ use_container_width=True → width="stretch"
+                                draw_route = st.button(
+                                    "🚗 선택 업체 최적 동선(실제 도로) 그리기",
+                                    width="stretch",
+                                    key=f"draw_route_btn_{key_sfx}"
+                                )
                                 start_pt_data = pd.DataFrame([{
                                     "lon": start_lon, "lat": start_lat,
                                     "tooltip": "<b>🏢 대성에너지 서부지사 (출발지)</b><br>대구광역시 서구 와룡로73길 30",
@@ -640,6 +624,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             df_show.insert(0, "No.", range(1, len(df_show) + 1))
                             df_show.insert(0, "선택", False)
                             df_show["비고"] = np.where(df_show["증감률(%)"] <= -99.9, "폐업의심", "")
+
                             sum_prev_all = df_show[prev_col_name].sum()
                             sum_curr_all = df_show[curr_col_name].sum()
                             sum_rate_all = ((sum_curr_all - sum_prev_all) / sum_prev_all * 100) if sum_prev_all > 0 else 0
@@ -651,18 +636,20 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             }])
                             df_show = pd.concat([df_show, total_row], ignore_index=True)
 
-                            def highlight_map_total(s):
-                                is_total = s.astype(str).str.contains('💡 총계').any()
-                                if is_total:
-                                    return ['background-color: #e0e2e6; font-weight: bold;'] * len(s)
-                                return [''] * len(s)
-
-                            fmt_dict = {prev_col_name: "{:,.0f}", curr_col_name: "{:,.0f}", "증감": "{:,.0f}", "증감률(%)": "{:,.1f}"}
+                            # ✅ st.data_editor에는 순수 DataFrame만 전달 (Styler 제거)
                             st.data_editor(
-                                center_style(df_show.style.format(fmt_dict).apply(highlight_map_total, axis=1)),
-                                column_config={"선택": st.column_config.CheckboxColumn("선택", default=False)},
+                                df_show,
+                                column_config={
+                                    "선택": st.column_config.CheckboxColumn("선택", default=False),
+                                    prev_col_name: st.column_config.NumberColumn(format="%.0f"),
+                                    curr_col_name: st.column_config.NumberColumn(format="%.0f"),
+                                    "증감": st.column_config.NumberColumn(format="%.0f"),
+                                    "증감률(%)": st.column_config.NumberColumn(format="%.1f"),
+                                },
                                 disabled=[c for c in df_show.columns if c != "선택"],
-                                hide_index=True, key=editor_key
+                                hide_index=True,
+                                key=editor_key,
+                                width="stretch"
                             )
                         else:
                             st.error("매핑된 위경도 좌표가 없어 지도를 표시할 수 없습니다.")
@@ -674,10 +661,10 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.markdown("<hr style='border-top: 2px solid #1e3a8a; margin: 50px 0 20px 0;'>", unsafe_allow_html=True)
 
         # ─────────────────────────────────────────────────────────
-        # 통합 분석 함수
+        # 분석 함수
         # ─────────────────────────────────────────────────────────
         def render_full_usage_report(usage_name, section_num, key_sfx_inner, db_key):
-            df_u_csv = pd.DataFrame()  # 반드시 초기화
+            df_u_csv = pd.DataFrame()
 
             st.markdown(
                 f"""<div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
@@ -762,7 +749,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
 
             st.markdown(
                 f"""<div style="background-color: #f8f9fa; border-left: 5px solid #1e3a8a; padding: 15px;
-                    margin-bottom: 20px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                    margin-bottom: 20px; border-radius: 4px;">
                     <div style="font-size: 15px; color: #1e3a8a; font-weight: 700; line-height: 1.6;">
                         💡 [요약] 당해 실적: {sum_act:,.0f} {unit_str}<br>
                         {diff_label} <span style="color: {'#d32f2f' if diff_prev < 0 else '#1f77b4'};">
@@ -772,9 +759,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             )
 
             vals_act = [p_curr_act_all.get(m, 0) for m in months_list]
-            graph_max_c = max([sum_prev, sum_act]) if months_list else 0
-            graph_max_m = max(max(vals_act) if vals_act else 0, max(vals_prev) if vals_prev else 0)
-            overall_max = max(graph_max_c, graph_max_m)
+            overall_max = max(max(vals_act) if vals_act else 0, max(vals_prev) if vals_prev else 0,
+                              sum_prev, sum_act)
             yaxis_range = [0, overall_max * 1.1 if overall_max > 0 else 100]
 
             col_c, col_m = st.columns([1, 2.5])
@@ -789,7 +775,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     text=[f"{sum_prev:,.0f}", f"{sum_act:,.0f}"],
                     textposition='auto', textfont=dict(size=14)
                 ))
-                st.plotly_chart(fig_c, key=f"fig_c_{usage_name}_{key_sfx_inner}", use_container_width=True)
+                # ✅ use_container_width=True → width="stretch"
+                st.plotly_chart(fig_c, key=f"fig_c_{usage_name}_{key_sfx_inner}", width="stretch")
 
             with col_m:
                 st.markdown(f"**■ 월별 실적 추이 (YoY)** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
@@ -804,7 +791,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     text=[f"{v:,.0f}" if v > 0 else "" for v in vals_prev], textposition='auto', textfont=dict(size=11)))
                 fig_m.add_trace(go.Bar(x=months_list, y=vals_act, name=curr_legend, marker_color=COLOR_ACT,
                     text=[f"{v:,.0f}" if v > 0 else "" for v in vals_act], textposition='auto', textfont=dict(size=11)))
-                st.plotly_chart(fig_m, key=f"fig_m_{usage_name}_{key_sfx_inner}", use_container_width=True)
+                # ✅ use_container_width=True → width="stretch"
+                st.plotly_chart(fig_m, key=f"fig_m_{usage_name}_{key_sfx_inner}", width="stretch")
 
             if not df_csv_tab.empty and val_col in df_csv_tab.columns:
                 if "상품명" in df_csv_tab.columns:
@@ -856,7 +844,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     fig_ind.update_layout(barmode='group', xaxis_title="", yaxis_title=f"판매량({unit_str})",
                         margin=dict(t=10, b=10, l=10, r=10), height=420,
                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                    st.plotly_chart(fig_ind, key=f"fig_ind_{usage_name}_{key_sfx_inner}", use_container_width=True)
+                    # ✅ use_container_width=True → width="stretch"
+                    st.plotly_chart(fig_ind, key=f"fig_ind_{usage_name}_{key_sfx_inner}", width="stretch")
 
                 st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
                 st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
@@ -905,7 +894,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                 font=dict(size=13, color="#d32f2f" if diff_val < 0 else "#1f77b4"),
                                 bgcolor="#f8f9fa", bordercolor="#d0d7e5", borderwidth=1, borderpad=4
                             )
-                            st.plotly_chart(fig_cust_cum, key=f"fig_cum_{usage_name}_{key_sfx_inner}_{sel_cust}", use_container_width=True)
+                            # ✅ use_container_width=True → width="stretch"
+                            st.plotly_chart(fig_cust_cum, key=f"fig_cum_{usage_name}_{key_sfx_inner}_{sel_cust}", width="stretch")
 
                         with cc2:
                             fig_cust_mon = go.Figure()
@@ -927,18 +917,19 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                         prev_vals_c.append(c_data[(c_data['연_csv'] == curr_year - 1) & (c_data['월_csv'] == 12)][val_col].sum())
                             fig_cust_mon.add_trace(go.Bar(x=months_list, y=prev_vals_c, name=prev_legend, marker_color=COLOR_PREV,
                                 text=[f"{v:,.0f}" if v > 0 else "" for v in prev_vals_c],
-                                textposition='auto', textfont=dict(size=11), hovertemplate="%{x}월: %{y:,.0f}<extra></extra>"))
+                                textposition='auto', textfont=dict(size=11)))
                             fig_cust_mon.add_trace(go.Bar(x=months_list, y=cur_vals_c, name=curr_legend, marker_color=COLOR_ACT,
                                 text=[f"{v:,.0f}" if v > 0 else "" for v in cur_vals_c],
-                                textposition='auto', textfont=dict(size=11), hovertemplate="%{x}월: %{y:,.0f}<extra></extra>"))
-                            st.plotly_chart(fig_cust_mon, key=f"fig_mon_{usage_name}_{key_sfx_inner}_{sel_cust}", use_container_width=True)
+                                textposition='auto', textfont=dict(size=11)))
+                            # ✅ use_container_width=True → width="stretch"
+                            st.plotly_chart(fig_cust_mon, key=f"fig_mon_{usage_name}_{key_sfx_inner}_{sel_cust}", width="stretch")
 
         render_full_usage_report("산업용", "2", key_sfx, "ind")
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
         render_full_usage_report("업무용", "3", key_sfx, "biz")
 
         # ─────────────────────────────────────────────────────────
-        # 4. 보고서 출력
+        # 보고서 출력
         # ─────────────────────────────────────────────────────────
         st.markdown("<hr style='border-top: 2px solid #bbb; margin: 40px 0 20px 0;'>", unsafe_allow_html=True)
         st.markdown("### 🖨️ 4. 보고서 출력")
@@ -948,7 +939,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 header[data-testid="stHeader"] { display: none !important; }
                 section[data-testid="stSidebar"] { display: none !important; }
                 div[data-testid="stToolbar"] { display: none !important; }
-                iframe[title="st.iframe"] { display: none !important; }
             }
             </style>
         """, unsafe_allow_html=True)
