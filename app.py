@@ -101,11 +101,6 @@ def clean_korean_finance_number(val):
     try: return float(s)
     except: return 0.0
 
-def fmt_num_safe(v) -> str:
-    if pd.isna(v): return "-"
-    try: return f"{float(v):,.0f}"
-    except: return "-"
-
 def keyword_group(col: str) -> Optional[str]:
     c = str(col)
     if "열병합" in c: return "열병합"
@@ -406,7 +401,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         max_month = int(sel_month_str.replace("월", ""))
         report_db_key = f"{sel_year_rpt}_{max_month}M_{unit_str}_yoy_only"
         if report_db_key not in comments_db: comments_db[report_db_key] = {}
-        curr_db = comments_db[report_db_key]
 
         st.markdown("<hr style='margin: 10px 0 30px 0;'>", unsafe_allow_html=True)
 
@@ -459,204 +453,205 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             else:
                 return (df["연_csv"] == y) & (df["월_csv"] == m)
 
-        if not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns and "용도" in df_csv_tab.columns:
-            df_map_base_unfiltered = df_csv_tab.copy()
+        if (not df_csv_tab.empty and "도로명주소" in df_csv_tab.columns
+                and "고객명" in df_csv_tab.columns
+                and val_col in df_csv_tab.columns
+                and "용도" in df_csv_tab.columns):
 
-            if not df_map_base_unfiltered.empty:
-                if map_usage == "산업용":
-                    df_map_filtered = df_map_base_unfiltered[df_map_base_unfiltered["용도"] == "산업용"].copy()
+            if map_usage == "산업용":
+                df_map_filtered = df_csv_tab[df_csv_tab["용도"] == "산업용"].copy()
+            else:
+                if "상품명" in df_csv_tab.columns:
+                    prod_s = df_csv_tab["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
+                    mask_u = (df_csv_tab["용도"] == "업무용") | (prod_s.isin(["냉난방용(업무)", "업무난방용", "주한미군"]))
+                    df_map_filtered = df_csv_tab[mask_u].copy()
                 else:
-                    if "상품명" in df_map_base_unfiltered.columns:
-                        prod_s = df_map_base_unfiltered["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
-                        mask_u = (df_map_base_unfiltered["용도"] == "업무용") | (prod_s.isin(["냉난방용(업무)", "업무난방용", "주한미군"]))
-                        df_map_filtered = df_map_base_unfiltered[mask_u].copy()
-                    else:
-                        df_map_filtered = df_map_base_unfiltered[df_map_base_unfiltered["용도"] == "업무용"].copy()
+                    df_map_filtered = df_csv_tab[df_csv_tab["용도"] == "업무용"].copy()
 
-                df_map_filtered["용도_태그"] = f"[{map_usage}]"
-                mask_curr_map = get_mask(df_map_filtered, curr_year, curr_month, agg_mode)
-                mask_prev_map = get_mask(df_map_filtered, prev_year, prev_month, agg_mode)
+            df_map_filtered["용도_태그"] = f"[{map_usage}]"
+            mask_curr_map = get_mask(df_map_filtered, curr_year, curr_month, agg_mode)
+            mask_prev_map = get_mask(df_map_filtered, prev_year, prev_month, agg_mode)
 
-                map_curr = (df_map_filtered[mask_curr_map]
-                            .groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col]
-                            .sum().rename(columns={val_col: "당해년도"}))
-                map_prev = (df_map_filtered[mask_prev_map]
-                            .groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col]
-                            .sum().rename(columns={val_col: "전년도"}))
+            map_curr = (df_map_filtered[mask_curr_map]
+                        .groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col]
+                        .sum().rename(columns={val_col: "당해년도"}))
+            map_prev = (df_map_filtered[mask_prev_map]
+                        .groupby(["고객명", "도로명주소", "용도_태그"], as_index=False)[val_col]
+                        .sum().rename(columns={val_col: "전년도"}))
 
-                if not map_curr.empty and not map_prev.empty:
-                    df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소", "용도_태그"], how="inner").fillna(0)
-                    df_map_merged["증감률(%)"] = np.where(
-                        df_map_merged["전년도"] > 0,
-                        ((df_map_merged["당해년도"] - df_map_merged["전년도"]) / df_map_merged["전년도"]) * 100,
-                        0
-                    )
-                    alarm_df = df_map_merged[df_map_merged["증감률(%)"] <= -5].copy()
+            if not map_curr.empty and not map_prev.empty:
+                df_map_merged = pd.merge(map_curr, map_prev, on=["고객명", "도로명주소", "용도_태그"], how="inner").fillna(0)
+                df_map_merged["증감률(%)"] = np.where(
+                    df_map_merged["전년도"] > 0,
+                    ((df_map_merged["당해년도"] - df_map_merged["전년도"]) / df_map_merged["전년도"]) * 100,
+                    0
+                )
+                alarm_df = df_map_merged[df_map_merged["증감률(%)"] <= -5].copy()
 
-                    if alarm_df.empty:
-                        st.success(f"✅ 선택한 기간 내 5% 이상 하락한 {map_usage} 리스크 업체가 없습니다.")
-                    else:
-                        st.warning(f"🚨 총 **{len(alarm_df)}**개의 {map_usage} 업체에서 5% 이상 하락 신호가 감지되었습니다.")
+                if alarm_df.empty:
+                    st.success(f"✅ 선택한 기간 내 5% 이상 하락한 {map_usage} 리스크 업체가 없습니다.")
+                else:
+                    st.warning(f"🚨 총 **{len(alarm_df)}**개의 {map_usage} 업체에서 5% 이상 하락 신호가 감지되었습니다.")
 
-                        alarm_df["감소량"] = alarm_df["전년도"] - alarm_df["당해년도"]
-                        alarm_df = alarm_df.sort_values(by="감소량", ascending=False).head(100).reset_index(drop=True)
-                        alarm_df["증감"] = alarm_df["당해년도"] - alarm_df["전년도"]
+                    alarm_df["감소량"] = alarm_df["전년도"] - alarm_df["당해년도"]
+                    alarm_df = alarm_df.sort_values(by="감소량", ascending=False).head(100).reset_index(drop=True)
+                    alarm_df["증감"] = alarm_df["당해년도"] - alarm_df["전년도"]
 
-                        lats, lons, tooltips, colors, radiuses = [], [], [], [], []
-                        for _, row in alarm_df.iterrows():
-                            lat, lon = get_coord_from_df(row['도로명주소'], coord_df)
-                            lats.append(lat)
-                            lons.append(lon)
-                            rate = row['증감률(%)']
-                            if map_usage == "산업용":
-                                if rate <= -20:   level, c_color, r_size = "심각", [180, 0, 0, 255], 150
-                                elif rate <= -10: level, c_color, r_size = "경계", [255, 80, 80, 200], 100
-                                else:             level, c_color, r_size = "주의", [255, 150, 150, 200], 80
-                            else:
-                                if rate <= -20:   level, c_color, r_size = "심각", [0, 0, 180, 255], 150
-                                elif rate <= -10: level, c_color, r_size = "경계", [80, 150, 255, 200], 100
-                                else:             level, c_color, r_size = "주의", [120, 180, 255, 200], 80
-                            colors.append(c_color)
-                            radiuses.append(r_size)
-                            info = f"<b>{row['용도_태그']} {row['고객명']} <span style='color:red;'>[{level}]</span></b><br/>"
-                            info += f"전년/전월: {row['전년도']:,.0f} / 당해: {row['당해년도']:,.0f}<br/>"
-                            info += f"증감률: <span style='color:red; font-weight:bold;'>{row['증감률(%)']:.1f}%</span><br/>"
-                            info += f"<span style='font-size:0.8em; color:gray;'>{row['도로명주소']}</span>"
-                            tooltips.append(info)
-
-                        alarm_df['lat'] = lats
-                        alarm_df['lon'] = lons
-                        alarm_df['tooltip'] = tooltips
-                        alarm_df['color'] = colors
-                        alarm_df['radius'] = radiuses
-                        alarm_df = alarm_df.dropna(subset=['lat', 'lon'])
-
-                        if not alarm_df.empty:
-                            editor_key = f"editor_{map_usage}_{key_sfx}"
-                            selected_indices = []
-                            if editor_key in st.session_state:
-                                edited_rows = st.session_state[editor_key].get("edited_rows", {})
-                                for idx_str, row_changes in edited_rows.items():
-                                    if row_changes.get("선택", False):
-                                        idx_int = int(idx_str)
-                                        if idx_int < len(alarm_df):
-                                            selected_indices.append(idx_int)
-
-                            map_df = alarm_df.iloc[selected_indices].copy() if selected_indices else alarm_df.copy()
-
-                            layer = pdk.Layer(
-                                "ScatterplotLayer", data=map_df,
-                                get_position='[lon, lat]', get_color='color', get_radius='radius',
-                                pickable=True, opacity=0.6, filled=True, stroked=True,
-                                get_line_color=[255, 255, 255, 200], line_width_min_pixels=1, radius_max_pixels=40
-                            )
-                            layers = [layer]
-                            start_lat, start_lon = 35.8660194, 128.5332943
-
-                            if selected_indices:
-                                # ✅ use_container_width=True → width="stretch"
-                                draw_route = st.button(
-                                    "🚗 선택 업체 최적 동선(실제 도로) 그리기",
-                                    width="stretch",
-                                    key=f"draw_route_btn_{key_sfx}"
-                                )
-                                start_pt_data = pd.DataFrame([{
-                                    "lon": start_lon, "lat": start_lat,
-                                    "tooltip": "<b>🏢 대성에너지 서부지사 (출발지)</b><br>대구광역시 서구 와룡로73길 30",
-                                    "color": [255, 193, 7, 255], "radius": 150
-                                }])
-                                layers.append(pdk.Layer(
-                                    "ScatterplotLayer", data=start_pt_data,
-                                    get_position='[lon, lat]', get_color='color', get_radius='radius',
-                                    pickable=True, opacity=1.0, filled=True, stroked=True,
-                                    get_line_color=[0, 0, 0, 255], line_width_min_pixels=2, radius_max_pixels=15
-                                ))
-                                if draw_route:
-                                    with st.spinner("카카오 모빌리티 API를 통해 최적 도로 경로를 탐색 중입니다..."):
-                                        unvisited = map_df[['lon', 'lat', '고객명']].to_dict('records')
-                                        curr_lat_r, curr_lon_r = start_lat, start_lon
-                                        ordered_stops = []
-                                        while unvisited:
-                                            nearest = min(unvisited, key=lambda pt: (pt['lat'] - curr_lat_r) ** 2 + (pt['lon'] - curr_lon_r) ** 2)
-                                            ordered_stops.append(nearest)
-                                            curr_lat_r, curr_lon_r = nearest['lat'], nearest['lon']
-                                            unvisited.remove(nearest)
-                                        full_route_coords = []
-                                        current_pt = [start_lon, start_lat]
-                                        for stop in ordered_stops:
-                                            target_pt = [stop['lon'], stop['lat']]
-                                            route_segment = get_kakao_route(current_pt[0], current_pt[1], target_pt[0], target_pt[1])
-                                            full_route_coords.extend(route_segment if route_segment else [current_pt, target_pt])
-                                            current_pt = target_pt
-                                        if full_route_coords:
-                                            path_data = pd.DataFrame([{"path": full_route_coords, "color": [46, 204, 113, 255]}])
-                                            layers.append(pdk.Layer(
-                                                "PathLayer", data=path_data,
-                                                get_path="path", get_color="color",
-                                                width_scale=20, width_min_pixels=3, get_width=5
-                                            ))
-                                            st.success("✨ 최적 도로 경로가 지도에 표시되었습니다!")
-
-                            view_state = pdk.ViewState(
-                                latitude=start_lat if selected_indices else alarm_df['lat'].mean(),
-                                longitude=start_lon if selected_indices else alarm_df['lon'].mean(),
-                                zoom=11, pitch=40,
-                            )
-                            deck_obj = pdk.Deck(
-                                map_style=deck_map_style,
-                                layers=layers,
-                                initial_view_state=view_state,
-                                tooltip={"html": "{tooltip}", "style": {"backgroundColor": "white", "color": "black", "font-family": "NanumGothic"}}
-                            )
-                            st.pydeck_chart(deck_obj)
-
-                            st.markdown(
-                                f"<br><b>📋 지도 표기 업체 요약표</b> "
-                                f"<span style='font-size:13px; color:#d32f2f; margin-left:10px;'>✅ 표 좌측 [선택] 체크 시 상단 지도에 선택 업체와 출발지가 뜹니다.</span> "
-                                f"<span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>",
-                                unsafe_allow_html=True
-                            )
-                            prev_col_name = "전년도" if comp_mode == "YoY" else "전월"
-                            curr_col_name = "당해년도" if comp_mode == "YoY" else "당월"
-                            show_cols = ['용도_태그', '고객명', '도로명주소', '전년도', '당해년도', '증감', '증감률(%)']
-                            df_show = alarm_df[show_cols].copy()
-                            df_show = df_show.rename(columns={"전년도": prev_col_name, "당해년도": curr_col_name})
-                            df_show.insert(0, "No.", range(1, len(df_show) + 1))
-                            df_show.insert(0, "선택", False)
-                            df_show["비고"] = np.where(df_show["증감률(%)"] <= -99.9, "폐업의심", "")
-
-                            sum_prev_all = df_show[prev_col_name].sum()
-                            sum_curr_all = df_show[curr_col_name].sum()
-                            sum_rate_all = ((sum_curr_all - sum_prev_all) / sum_prev_all * 100) if sum_prev_all > 0 else 0
-                            total_row = pd.DataFrame([{
-                                "선택": False, "No.": "", "용도_태그": "💡 총계",
-                                "고객명": "", "도로명주소": "",
-                                prev_col_name: sum_prev_all, curr_col_name: sum_curr_all,
-                                "증감": sum_curr_all - sum_prev_all, "증감률(%)": sum_rate_all, "비고": ""
-                            }])
-                            df_show = pd.concat([df_show, total_row], ignore_index=True)
-
-                            # ✅ st.data_editor에는 순수 DataFrame만 전달 (Styler 제거)
-                            st.data_editor(
-                                df_show,
-                                column_config={
-                                    "선택": st.column_config.CheckboxColumn("선택", default=False),
-                                    prev_col_name: st.column_config.NumberColumn(format="%.0f"),
-                                    curr_col_name: st.column_config.NumberColumn(format="%.0f"),
-                                    "증감": st.column_config.NumberColumn(format="%.0f"),
-                                    "증감률(%)": st.column_config.NumberColumn(format="%.1f"),
-                                },
-                                disabled=[c for c in df_show.columns if c != "선택"],
-                                hide_index=True,
-                                key=editor_key,
-                                width="stretch"
-                            )
+                    lats, lons, tooltips, colors, radiuses = [], [], [], [], []
+                    for _, row in alarm_df.iterrows():
+                        lat, lon = get_coord_from_df(row['도로명주소'], coord_df)
+                        lats.append(lat)
+                        lons.append(lon)
+                        rate = row['증감률(%)']
+                        if map_usage == "산업용":
+                            if rate <= -20:   level, c_color, r_size = "심각", [180, 0, 0, 255], 150
+                            elif rate <= -10: level, c_color, r_size = "경계", [255, 80, 80, 200], 100
+                            else:             level, c_color, r_size = "주의", [255, 150, 150, 200], 80
                         else:
-                            st.error("매핑된 위경도 좌표가 없어 지도를 표시할 수 없습니다.")
-                else:
-                    st.info("비교할 과거 또는 당해 연도 데이터가 없습니다.")
+                            if rate <= -20:   level, c_color, r_size = "심각", [0, 0, 180, 255], 150
+                            elif rate <= -10: level, c_color, r_size = "경계", [80, 150, 255, 200], 100
+                            else:             level, c_color, r_size = "주의", [120, 180, 255, 200], 80
+                        colors.append(c_color)
+                        radiuses.append(r_size)
+                        info = f"<b>{row['용도_태그']} {row['고객명']} <span style='color:red;'>[{level}]</span></b><br/>"
+                        info += f"전년/전월: {row['전년도']:,.0f} / 당해: {row['당해년도']:,.0f}<br/>"
+                        info += f"증감률: <span style='color:red; font-weight:bold;'>{row['증감률(%)']:.1f}%</span><br/>"
+                        info += f"<span style='font-size:0.8em; color:gray;'>{row['도로명주소']}</span>"
+                        tooltips.append(info)
+
+                    alarm_df['lat'] = lats
+                    alarm_df['lon'] = lons
+                    alarm_df['tooltip'] = tooltips
+                    alarm_df['color'] = colors
+                    alarm_df['radius'] = radiuses
+                    alarm_df = alarm_df.dropna(subset=['lat', 'lon'])
+
+                    if not alarm_df.empty:
+                        editor_key = f"editor_{map_usage}_{key_sfx}"
+                        selected_indices = []
+                        if editor_key in st.session_state:
+                            edited_rows = st.session_state[editor_key].get("edited_rows", {})
+                            for idx_str, row_changes in edited_rows.items():
+                                if row_changes.get("선택", False):
+                                    idx_int = int(idx_str)
+                                    if idx_int < len(alarm_df):
+                                        selected_indices.append(idx_int)
+
+                        map_df = alarm_df.iloc[selected_indices].copy() if selected_indices else alarm_df.copy()
+
+                        layer = pdk.Layer(
+                            "ScatterplotLayer", data=map_df,
+                            get_position='[lon, lat]', get_color='color', get_radius='radius',
+                            pickable=True, opacity=0.6, filled=True, stroked=True,
+                            get_line_color=[255, 255, 255, 200], line_width_min_pixels=1, radius_max_pixels=40
+                        )
+                        layers = [layer]
+                        start_lat, start_lon = 35.8660194, 128.5332943
+
+                        if selected_indices:
+                            # ✅ use_container_width=True (1.63.0에서 유효한 파라미터)
+                            draw_route = st.button(
+                                "🚗 선택 업체 최적 동선(실제 도로) 그리기",
+                                use_container_width=True,
+                                key=f"draw_route_btn_{key_sfx}"
+                            )
+                            start_pt_data = pd.DataFrame([{
+                                "lon": start_lon, "lat": start_lat,
+                                "tooltip": "<b>🏢 대성에너지 서부지사 (출발지)</b>",
+                                "color": [255, 193, 7, 255], "radius": 150
+                            }])
+                            layers.append(pdk.Layer(
+                                "ScatterplotLayer", data=start_pt_data,
+                                get_position='[lon, lat]', get_color='color', get_radius='radius',
+                                pickable=True, opacity=1.0, filled=True, stroked=True,
+                                get_line_color=[0, 0, 0, 255], line_width_min_pixels=2, radius_max_pixels=15
+                            ))
+                            if draw_route:
+                                with st.spinner("카카오 모빌리티 API를 통해 최적 도로 경로를 탐색 중입니다..."):
+                                    unvisited = map_df[['lon', 'lat', '고객명']].to_dict('records')
+                                    curr_lat_r, curr_lon_r = start_lat, start_lon
+                                    ordered_stops = []
+                                    while unvisited:
+                                        nearest = min(unvisited, key=lambda pt: (pt['lat'] - curr_lat_r) ** 2 + (pt['lon'] - curr_lon_r) ** 2)
+                                        ordered_stops.append(nearest)
+                                        curr_lat_r, curr_lon_r = nearest['lat'], nearest['lon']
+                                        unvisited.remove(nearest)
+                                    full_route_coords = []
+                                    current_pt = [start_lon, start_lat]
+                                    for stop in ordered_stops:
+                                        target_pt = [stop['lon'], stop['lat']]
+                                        route_segment = get_kakao_route(current_pt[0], current_pt[1], target_pt[0], target_pt[1])
+                                        full_route_coords.extend(route_segment if route_segment else [current_pt, target_pt])
+                                        current_pt = target_pt
+                                    if full_route_coords:
+                                        path_data = pd.DataFrame([{"path": full_route_coords, "color": [46, 204, 113, 255]}])
+                                        layers.append(pdk.Layer(
+                                            "PathLayer", data=path_data,
+                                            get_path="path", get_color="color",
+                                            width_scale=20, width_min_pixels=3, get_width=5
+                                        ))
+                                        st.success("✨ 최적 도로 경로가 지도에 표시되었습니다!")
+
+                        view_state = pdk.ViewState(
+                            latitude=start_lat if selected_indices else alarm_df['lat'].mean(),
+                            longitude=start_lon if selected_indices else alarm_df['lon'].mean(),
+                            zoom=11, pitch=40,
+                        )
+                        deck_obj = pdk.Deck(
+                            map_style=deck_map_style,
+                            layers=layers,
+                            initial_view_state=view_state,
+                            tooltip={"html": "{tooltip}", "style": {"backgroundColor": "white", "color": "black"}}
+                        )
+                        st.pydeck_chart(deck_obj)
+
+                        st.markdown(
+                            f"<br><b>📋 지도 표기 업체 요약표</b> "
+                            f"<span style='font-size:13px; color:#d32f2f; margin-left:10px;'>✅ 표 좌측 [선택] 체크 시 상단 지도에 선택 업체와 출발지가 뜹니다.</span>",
+                            unsafe_allow_html=True
+                        )
+                        prev_col_name = "전년도" if comp_mode == "YoY" else "전월"
+                        curr_col_name = "당해년도" if comp_mode == "YoY" else "당월"
+                        show_cols = ['용도_태그', '고객명', '도로명주소', '전년도', '당해년도', '증감', '증감률(%)']
+                        df_show = alarm_df[show_cols].copy()
+                        df_show = df_show.rename(columns={"전년도": prev_col_name, "당해년도": curr_col_name})
+                        df_show.insert(0, "No.", range(1, len(df_show) + 1))
+                        df_show.insert(0, "선택", False)
+                        df_show["비고"] = np.where(df_show["증감률(%)"] <= -99.9, "폐업의심", "")
+
+                        sum_prev_all = df_show[prev_col_name].sum()
+                        sum_curr_all = df_show[curr_col_name].sum()
+                        sum_rate_all = ((sum_curr_all - sum_prev_all) / sum_prev_all * 100) if sum_prev_all > 0 else 0
+                        total_row = pd.DataFrame([{
+                            "선택": False, "No.": "", "용도_태그": "💡 총계",
+                            "고객명": "", "도로명주소": "",
+                            prev_col_name: sum_prev_all, curr_col_name: sum_curr_all,
+                            "증감": sum_curr_all - sum_prev_all,
+                            "증감률(%)": sum_rate_all, "비고": ""
+                        }])
+                        df_show = pd.concat([df_show, total_row], ignore_index=True)
+
+                        # ✅ st.data_editor에 순수 DataFrame만 전달 (Styler 절대 사용 안 함)
+                        st.data_editor(
+                            df_show,
+                            column_config={
+                                "선택": st.column_config.CheckboxColumn("선택", default=False),
+                                prev_col_name: st.column_config.NumberColumn(format="%.0f"),
+                                curr_col_name: st.column_config.NumberColumn(format="%.0f"),
+                                "증감": st.column_config.NumberColumn(format="%.0f"),
+                                "증감률(%)": st.column_config.NumberColumn(format="%.1f"),
+                            },
+                            disabled=[c for c in df_show.columns if c != "선택"],
+                            hide_index=True,
+                            use_container_width=True,
+                            key=editor_key,
+                        )
+                    else:
+                        st.error("매핑된 위경도 좌표가 없어 지도를 표시할 수 없습니다.")
+            else:
+                st.info("비교할 과거 또는 당해 연도 데이터가 없습니다.")
         else:
-            st.info("데이터에 '도로명주소', '고객명', '용도' 컬럼이 없거나 데이터가 부족하여 지도를 생성할 수 없습니다.")
+            st.info("데이터에 '도로명주소', '고객명', '용도' 컬럼이 없거나 데이터가 부족합니다.")
 
         st.markdown("<hr style='border-top: 2px solid #1e3a8a; margin: 50px 0 20px 0;'>", unsafe_allow_html=True)
 
@@ -666,12 +661,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         def render_full_usage_report(usage_name, section_num, key_sfx_inner, db_key):
             df_u_csv = pd.DataFrame()
 
-            st.markdown(
-                f"""<div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
-                    <h4 style="margin: 0;">📈 {section_num}. 용도별 판매량 분석 : {usage_name}</h4>
-                </div>""",
-                unsafe_allow_html=True
-            )
+            st.markdown(f"#### 📈 {section_num}. 용도별 판매량 분석 : {usage_name}")
 
             if not df_long_rpt.empty:
                 df_u = df_long_rpt[(df_long_rpt["그룹"] == usage_name)]
@@ -686,8 +676,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     if usage_name == "산업용":
                         df_u_csv = df_csv_tab[csv_products == "산업용"].copy()
                     else:
-                        valid_biz_nospaces = ["냉난방용(업무)", "업무난방용", "주한미군"]
-                        df_u_csv = df_csv_tab[csv_products.isin(valid_biz_nospaces)].copy()
+                        valid_biz = ["냉난방용(업무)", "업무난방용", "주한미군"]
+                        df_u_csv = df_csv_tab[csv_products.isin(valid_biz)].copy()
                     p_curr_act_all = df_u_csv[df_u_csv["연_csv"] == curr_year].groupby("월_csv")[val_col].sum()
                     p_prev_act_all = df_u_csv[df_u_csv["연_csv"] == prev_year].groupby("월_csv")[val_col].sum()
                 else:
@@ -714,7 +704,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 if agg_mode == "누적 실적 (1월~당월)":
                     sum_act = p_curr_act_all[p_curr_act_all.index <= curr_month].sum()
                     sum_prev = p_prev_act_all[p_prev_act_all.index <= prev_month].sum()
-                    top_title = f"**■ 누적 실적 비교 ({prev_month}월 누적 vs {curr_month}월 누적)**"
+                    top_title = f"**■ 누적 ({prev_month}월 vs {curr_month}월)**"
                 else:
                     sum_act = p_curr_act_all.get(curr_month, 0)
                     sum_prev = p_prev_act_all.get(prev_month, 0)
@@ -734,7 +724,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                 (df_long_rpt["계획/실적"] == "실적")
                             ].groupby("월")["값"].sum()
                             vals_prev.append(p_last_yr.get(12, 0))
-                        elif not df_csv_tab.empty and val_col in df_csv_tab.columns and not df_u_csv.empty:
+                        elif not df_u_csv.empty:
                             p_last_yr = df_u_csv[df_u_csv["연_csv"] == curr_year - 1].groupby("월_csv")[val_col].sum()
                             vals_prev.append(p_last_yr.get(12, 0))
                         else:
@@ -765,7 +755,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
 
             col_c, col_m = st.columns([1, 2.5])
             with col_c:
-                st.markdown(top_title + f" <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
+                st.markdown(top_title, unsafe_allow_html=True)
                 fig_c = go.Figure()
                 fig_c.update_layout(margin=dict(t=30, b=20, l=40, r=10), height=420, showlegend=False)
                 fig_c.update_yaxes(range=yaxis_range)
@@ -775,11 +765,11 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     text=[f"{sum_prev:,.0f}", f"{sum_act:,.0f}"],
                     textposition='auto', textfont=dict(size=14)
                 ))
-                # ✅ use_container_width=True → width="stretch"
-                st.plotly_chart(fig_c, key=f"fig_c_{usage_name}_{key_sfx_inner}", width="stretch")
+                # ✅ use_container_width=True (1.63.0 정상 파라미터)
+                st.plotly_chart(fig_c, key=f"fig_c_{usage_name}_{key_sfx_inner}", use_container_width=True)
 
             with col_m:
-                st.markdown(f"**■ 월별 실적 추이 (YoY)** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
+                st.markdown(f"**■ 월별 실적 추이**", unsafe_allow_html=True)
                 fig_m = go.Figure()
                 fig_m.update_layout(
                     barmode='group', xaxis=dict(tickmode='linear', tick0=1, dtick=1),
@@ -791,8 +781,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     text=[f"{v:,.0f}" if v > 0 else "" for v in vals_prev], textposition='auto', textfont=dict(size=11)))
                 fig_m.add_trace(go.Bar(x=months_list, y=vals_act, name=curr_legend, marker_color=COLOR_ACT,
                     text=[f"{v:,.0f}" if v > 0 else "" for v in vals_act], textposition='auto', textfont=dict(size=11)))
-                # ✅ use_container_width=True → width="stretch"
-                st.plotly_chart(fig_m, key=f"fig_m_{usage_name}_{key_sfx_inner}", width="stretch")
+                # ✅ use_container_width=True
+                st.plotly_chart(fig_m, key=f"fig_m_{usage_name}_{key_sfx_inner}", use_container_width=True)
 
             if not df_csv_tab.empty and val_col in df_csv_tab.columns:
                 if "상품명" in df_csv_tab.columns:
@@ -801,67 +791,70 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     csv_products2 = pd.Series([""] * len(df_csv_tab), index=df_csv_tab.index)
 
                 if usage_name == "산업용":
-                    df_sub_filtered_base = df_csv_tab[csv_products2 == "산업용"].copy()
+                    df_sub = df_csv_tab[csv_products2 == "산업용"].copy()
                     grp_col = "업종"
                 else:
-                    valid_biz_nospaces = ["냉난방용(업무)", "업무난방용", "주한미군"]
-                    df_sub_filtered_base = df_csv_tab[csv_products2.isin(valid_biz_nospaces)].copy()
-                    if "업종분류" in df_sub_filtered_base.columns:
-                        df_sub_filtered_base["업종"] = df_sub_filtered_base["업종분류"]
+                    valid_biz = ["냉난방용(업무)", "업무난방용", "주한미군"]
+                    df_sub = df_csv_tab[csv_products2.isin(valid_biz)].copy()
+                    if "업종분류" in df_sub.columns:
+                        df_sub["업종"] = df_sub["업종분류"]
                     grp_col = "업종"
 
-                mask_curr_sub = get_mask(df_sub_filtered_base, curr_year, curr_month, agg_mode)
-                mask_prev_sub = get_mask(df_sub_filtered_base, prev_year, prev_month, agg_mode)
+                mask_curr_sub = get_mask(df_sub, curr_year, curr_month, agg_mode)
+                mask_prev_sub = get_mask(df_sub, prev_year, prev_month, agg_mode)
 
-                if not df_sub_filtered_base.empty and grp_col in df_sub_filtered_base.columns:
-                    curr_ind_grp = (df_sub_filtered_base[mask_curr_sub].groupby(grp_col, as_index=False)[val_col]
-                                    .sum().rename(columns={val_col: curr_name}))
-                    prev_ind_grp = (df_sub_filtered_base[mask_prev_sub].groupby(grp_col, as_index=False)[val_col]
-                                    .sum().rename(columns={val_col: prev_name}))
-                    ind_comp_graph = pd.merge(prev_ind_grp, curr_ind_grp, on=grp_col, how="outer").fillna(0)
-                    ind_comp_graph = ind_comp_graph.sort_values(curr_name, ascending=False).reset_index(drop=True)
+                if not df_sub.empty and grp_col in df_sub.columns:
+                    curr_ind = (df_sub[mask_curr_sub].groupby(grp_col, as_index=False)[val_col]
+                                .sum().rename(columns={val_col: curr_name}))
+                    prev_ind = (df_sub[mask_prev_sub].groupby(grp_col, as_index=False)[val_col]
+                                .sum().rename(columns={val_col: prev_name}))
+                    ind_comp = pd.merge(prev_ind, curr_ind, on=grp_col, how="outer").fillna(0)
+                    ind_comp = ind_comp.sort_values(curr_name, ascending=False).reset_index(drop=True)
 
-                    if len(ind_comp_graph) > 10:
-                        top10_df = ind_comp_graph.iloc[:10].copy()
-                        others_df = ind_comp_graph.iloc[10:].copy()
-                        others_row = pd.DataFrame([{grp_col: "기타", prev_name: others_df[prev_name].sum(), curr_name: others_df[curr_name].sum()}])
-                        ind_comp_plot = pd.concat([top10_df, others_row], ignore_index=True)
+                    if len(ind_comp) > 10:
+                        top10 = ind_comp.iloc[:10].copy()
+                        others = ind_comp.iloc[10:].copy()
+                        others_row = pd.DataFrame([{grp_col: "기타", prev_name: others[prev_name].sum(), curr_name: others[curr_name].sum()}])
+                        ind_comp_plot = pd.concat([top10, others_row], ignore_index=True)
                     else:
-                        ind_comp_plot = ind_comp_graph.copy()
+                        ind_comp_plot = ind_comp.copy()
 
                     ind_comp_plot["증감절대값"] = abs(ind_comp_plot[curr_name] - ind_comp_plot[prev_name])
                     max_diff_idx = ind_comp_plot["증감절대값"].idxmax()
                     colors_act = [COLOR_ACT] * len(ind_comp_plot)
                     if pd.notna(max_diff_idx): colors_act[int(max_diff_idx)] = "#d32f2f"
 
-                    comp_title_suffix = "(당해연도 vs 전년도)" if comp_mode == "YoY" else "(당월 vs 전월)"
-                    st.markdown(f"**■ 세부 업종별 판매량 비교 {comp_title_suffix}** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
+                    st.markdown(f"**■ 세부 업종별 판매량 비교**")
                     fig_ind = go.Figure()
-                    fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[prev_name], name=prev_name, marker_color=COLOR_PREV,
-                        text=[f"{v:,.0f}" if v > 0 else "" for v in ind_comp_plot[prev_name]], textposition='auto', textfont=dict(size=11)))
-                    fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[curr_name], name=curr_name, marker_color=colors_act,
-                        text=[f"{v:,.0f}" if v > 0 else "" for v in ind_comp_plot[curr_name]], textposition='auto', textfont=dict(size=11)))
-                    fig_ind.update_layout(barmode='group', xaxis_title="", yaxis_title=f"판매량({unit_str})",
-                        margin=dict(t=10, b=10, l=10, r=10), height=420,
+                    fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[prev_name], name=prev_name,
+                        marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v > 0 else "" for v in ind_comp_plot[prev_name]],
+                        textposition='auto', textfont=dict(size=11)))
+                    fig_ind.add_trace(go.Bar(x=ind_comp_plot[grp_col], y=ind_comp_plot[curr_name], name=curr_name,
+                        marker_color=colors_act, text=[f"{v:,.0f}" if v > 0 else "" for v in ind_comp_plot[curr_name]],
+                        textposition='auto', textfont=dict(size=11)))
+                    fig_ind.update_layout(barmode='group', margin=dict(t=10, b=10, l=10, r=10), height=420,
                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                    # ✅ use_container_width=True → width="stretch"
-                    st.plotly_chart(fig_ind, key=f"fig_ind_{usage_name}_{key_sfx_inner}", width="stretch")
+                    # ✅ use_container_width=True
+                    st.plotly_chart(fig_ind, key=f"fig_ind_{usage_name}_{key_sfx_inner}", use_container_width=True)
 
                 st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
-                st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트** <span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>", unsafe_allow_html=True)
+                st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트**")
 
-                if not df_sub_filtered_base.empty and "고객명" in df_sub_filtered_base.columns and grp_col in df_sub_filtered_base.columns:
-                    c_curr_all = (df_sub_filtered_base[mask_curr_sub].groupby(["고객명", grp_col], as_index=False)[val_col]
+                if not df_sub.empty and "고객명" in df_sub.columns and grp_col in df_sub.columns:
+                    c_curr_all = (df_sub[mask_curr_sub].groupby(["고객명", grp_col], as_index=False)[val_col]
                                   .sum().rename(columns={val_col: curr_name}))
-                    c_prev_all = (df_sub_filtered_base[mask_prev_sub].groupby(["고객명", grp_col], as_index=False)[val_col]
+                    c_prev_all = (df_sub[mask_prev_sub].groupby(["고객명", grp_col], as_index=False)[val_col]
                                   .sum().rename(columns={val_col: prev_name}))
                     grp_top = pd.merge(c_prev_all, c_curr_all, on=["고객명", grp_col], how="outer").fillna(0)
                     grp_top = grp_top.sort_values(curr_name, ascending=False).reset_index(drop=True)
                     grp_top = grp_top[(grp_top[curr_name] > 0) | (grp_top[prev_name] > 0)].reset_index(drop=True)
 
                     top_customers = [c for c in grp_top["고객명"] if "💡" not in str(c)]
-                    sel_cust = st.selectbox(f"상세 분석할 고객명을 선택하세요 ({usage_name})",
-                                            ["선택 안함"] + top_customers, key=f"sel_cust_{usage_name}_{key_sfx_inner}")
+                    sel_cust = st.selectbox(
+                        f"상세 분석할 고객명을 선택하세요 ({usage_name})",
+                        ["선택 안함"] + top_customers,
+                        key=f"sel_cust_{usage_name}_{key_sfx_inner}"
+                    )
 
                     if sel_cust != "선택 안함":
                         c_data = df_csv_tab[df_csv_tab["고객명"] == sel_cust]
@@ -871,7 +864,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                         sum_prev_c = c_data[mask_c_prev][val_col].sum()
                         chart_title = (f"'{sel_cust}' 누적 사용량 ({curr_month}월 누적)"
                                        if agg_mode == "누적 실적 (1월~당월)"
-                                       else f"'{sel_cust}' 당월 사용량 ({curr_month}월 당월)")
+                                       else f"'{sel_cust}' 당월 사용량 ({curr_month}월)")
                         diff_val = sum_cur_c - sum_prev_c
                         rate_val = (sum_cur_c / sum_prev_c * 100) if sum_prev_c > 0 else 0
                         sign_str = "+" if diff_val > 0 else ""
@@ -885,8 +878,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                 x=[prev_name, curr_name], y=[sum_prev_c, sum_cur_c],
                                 marker_color=[COLOR_PREV, COLOR_ACT],
                                 text=[f"{sum_prev_c:,.0f}", f"{sum_cur_c:,.0f}"],
-                                textposition='auto',
-                                hovertemplate="%{x}: %{y:,.0f}<extra></extra>"
+                                textposition='auto'
                             ))
                             fig_cust_cum.add_annotation(
                                 x=0.5, y=1.05, xref="paper", yref="paper",
@@ -894,8 +886,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                 font=dict(size=13, color="#d32f2f" if diff_val < 0 else "#1f77b4"),
                                 bgcolor="#f8f9fa", bordercolor="#d0d7e5", borderwidth=1, borderpad=4
                             )
-                            # ✅ use_container_width=True → width="stretch"
-                            st.plotly_chart(fig_cust_cum, key=f"fig_cum_{usage_name}_{key_sfx_inner}_{sel_cust}", width="stretch")
+                            # ✅ use_container_width=True
+                            st.plotly_chart(fig_cust_cum, key=f"fig_cum_{usage_name}_{key_sfx_inner}_{sel_cust}", use_container_width=True)
 
                         with cc2:
                             fig_cust_mon = go.Figure()
@@ -915,14 +907,14 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                         prev_vals_c.append(c_data[(c_data['연_csv'] == curr_year) & (c_data['월_csv'] == m - 1)][val_col].sum())
                                     else:
                                         prev_vals_c.append(c_data[(c_data['연_csv'] == curr_year - 1) & (c_data['월_csv'] == 12)][val_col].sum())
-                            fig_cust_mon.add_trace(go.Bar(x=months_list, y=prev_vals_c, name=prev_legend, marker_color=COLOR_PREV,
-                                text=[f"{v:,.0f}" if v > 0 else "" for v in prev_vals_c],
+                            fig_cust_mon.add_trace(go.Bar(x=months_list, y=prev_vals_c, name=prev_legend,
+                                marker_color=COLOR_PREV, text=[f"{v:,.0f}" if v > 0 else "" for v in prev_vals_c],
                                 textposition='auto', textfont=dict(size=11)))
-                            fig_cust_mon.add_trace(go.Bar(x=months_list, y=cur_vals_c, name=curr_legend, marker_color=COLOR_ACT,
-                                text=[f"{v:,.0f}" if v > 0 else "" for v in cur_vals_c],
+                            fig_cust_mon.add_trace(go.Bar(x=months_list, y=cur_vals_c, name=curr_legend,
+                                marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v > 0 else "" for v in cur_vals_c],
                                 textposition='auto', textfont=dict(size=11)))
-                            # ✅ use_container_width=True → width="stretch"
-                            st.plotly_chart(fig_cust_mon, key=f"fig_mon_{usage_name}_{key_sfx_inner}_{sel_cust}", width="stretch")
+                            # ✅ use_container_width=True
+                            st.plotly_chart(fig_cust_mon, key=f"fig_mon_{usage_name}_{key_sfx_inner}_{sel_cust}", use_container_width=True)
 
         render_full_usage_report("산업용", "2", key_sfx, "ind")
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
@@ -946,7 +938,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             <button onclick="window.parent.print()"
                 style="padding: 12px 20px; font-size: 16px; border-radius: 8px;
                        background-color: #1e3a8a; color: white; border: none; cursor: pointer;
-                       width: 100%; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin: 2px;">
+                       width: 100%; font-weight: bold; margin: 2px;">
                 🖨️ 현재 화면 전체를 PDF로 다운로드 (인쇄)
             </button>
         """)
