@@ -416,7 +416,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         st.caption("※ 고객명을 검색하면 해당 업체가 지도에 표시되고, 바로 아래에서 사용량 분석을 확인할 수 있습니다. (상단 기준 일자·집계 기준이 적용됩니다)")
 
         if (not df_csv_tab.empty and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns):
-            cs_c1, cs_c2 = st.columns([2, 1])
+            cs_c1, cs_c2, cs_c3 = st.columns([2, 1, 1])
             with cs_c1:
                 cs_query = st.text_input(
                     "고객명 입력 (일부만 입력해도 검색됩니다)",
@@ -428,6 +428,16 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     "비교 기준", ["YoY", "전월대비"], index=0, horizontal=True,
                     key=f"cs_comp{key_sfx}"
                 )
+            with cs_c3:
+                cs_map_style_ui = st.radio(
+                    "지도 배경 테마", ["다크 모드 (기본)", "일반 도로 지도"], index=0, horizontal=True,
+                    key=f"cs_map_style{key_sfx}"
+                )
+            cs_map_style = (
+                "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+                if cs_map_style_ui == "다크 모드 (기본)"
+                else "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+            )
 
             cs_year = sel_year_rpt
             cs_month = max_month
@@ -479,6 +489,16 @@ for idx, rpt_tab in enumerate(rpt_tabs):
 
                     cs_tbl = pd.DataFrame(index=cs_info.index)
                     cs_tbl["용도"] = cs_info["용도"].fillna("") if "용도" in cs_info.columns else ""
+                    # 업종: 산업용은 '업종', 업무용은 '업종분류' 사용 (비어 있으면 다른 컬럼으로 보완)
+                    cs_up_a = cs_hit.groupby("고객명")["업종"].first() if "업종" in cs_hit.columns else pd.Series(dtype=object)
+                    cs_up_b = cs_hit.groupby("고객명")["업종분류"].first() if "업종분류" in cs_hit.columns else pd.Series(dtype=object)
+                    cs_up_a = cs_up_a.reindex(cs_info.index).fillna("").astype(str).str.strip()
+                    cs_up_b = cs_up_b.reindex(cs_info.index).fillna("").astype(str).str.strip()
+                    cs_is_biz = (cs_tbl["용도"].astype(str) == "업무용").values
+                    cs_tbl["업종"] = np.where(
+                        cs_is_biz & (cs_up_b.values != ""), cs_up_b.values,
+                        np.where(cs_up_a.values != "", cs_up_a.values, cs_up_b.values)
+                    )
                     cs_tbl["도로명주소"] = cs_info["도로명주소"].fillna("") if "도로명주소" in cs_info.columns else ""
                     cs_tbl[cs_prev_col] = cs_pre.reindex(cs_tbl.index).fillna(0)
                     cs_tbl[cs_cur_col] = cs_cur.reindex(cs_tbl.index).fillna(0)
@@ -556,7 +576,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             radius_max_pixels=40
                         )
                         cs_deck = pdk.Deck(
-                            map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+                            map_style=cs_map_style,
                             layers=[cs_layer],
                             initial_view_state=pdk.ViewState(
                                 latitude=cs_center_lat, longitude=cs_center_lon,
@@ -1030,13 +1050,18 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             overall_max = max(max(vals_act) if vals_act else 0, max(vals_prev) if vals_prev else 0,
                               sum_prev, sum_act)
             yaxis_range = [0, overall_max * 1.1 if overall_max > 0 else 100]
+            # 좌측(누적/당월 비교)·우측(월별 추이) 차트가 각자 자기 값에 맞는 눈금을 쓰도록 분리
+            _max_c = max(sum_prev, sum_act)
+            _max_m = max(max(vals_act) if vals_act else 0, max(vals_prev) if vals_prev else 0)
+            yaxis_range_c = [0, _max_c * 1.1 if _max_c > 0 else 100]
+            yaxis_range_m = [0, _max_m * 1.1 if _max_m > 0 else 100]
 
             col_c, col_m = st.columns([1, 2.5])
             with col_c:
                 st.markdown(top_title, unsafe_allow_html=True)
                 fig_c = go.Figure()
                 fig_c.update_layout(margin=dict(t=30, b=20, l=40, r=10), height=420, showlegend=False)
-                fig_c.update_yaxes(range=yaxis_range)
+                fig_c.update_yaxes(range=yaxis_range_c)
                 fig_c.add_trace(go.Bar(
                     x=[f"{prev_name}<br>실적", f"{curr_name}<br>실적"], y=[sum_prev, sum_act],
                     marker_color=[COLOR_PREV, COLOR_ACT],
@@ -1054,7 +1079,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     margin=dict(t=30, b=20, l=40, r=10), height=420,
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                 )
-                fig_m.update_yaxes(range=yaxis_range)
+                fig_m.update_yaxes(range=yaxis_range_m)
                 fig_m.add_trace(go.Bar(x=months_list, y=vals_prev, name=prev_legend, marker_color=COLOR_PREV,
                     text=[f"{v:,.0f}" if v > 0 else "" for v in vals_prev], textposition='auto', textfont=dict(size=11)))
                 fig_m.add_trace(go.Bar(x=months_list, y=vals_act, name=curr_legend, marker_color=COLOR_ACT,
