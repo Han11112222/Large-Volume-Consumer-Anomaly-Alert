@@ -835,9 +835,9 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                         st.info("검색된 고객은 산업용·업무용 랭킹 대상이 아닙니다.")
                     else:
                         found = found.sort_values(["구분", "순위", "고객명"]).reset_index(drop=True)
-                        found["Top30"] = np.where(found["순위"] <= 30, "🏅 Top30", "")
-                        found_cols = ["구분", "순위", "대상 업체수", "고객명", "업종", "누적 판매량",
-                                      "전년 동기", "증감", "증감률(%)", "구성비(%)", "Top30"]
+                        found["비고"] = np.where(found["순위"] <= 30, "🏅 Top30 기업", "")
+                        found_cols = ["구분", "대상 업체수", "고객명", "업종", "누적 판매량",
+                                      "전년 동기", "증감", "증감률(%)", "구성비(%)", "순위", "비고"]
 
                         def cs_style_found(row):
                             css = "background-color: #fff3bf; font-weight: 600;" if row["순위"] <= 30 else ""
