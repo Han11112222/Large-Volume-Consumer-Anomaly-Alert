@@ -689,13 +689,6 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             for m in range(1, 13)
                         ]
                         cs_py_total = sum(cs_py_vals)
-                        cs_py_cells = "".join(
-                            "<div style='text-align:right;'>"
-                            f"<div style='font-size:11px; color:#868e96; font-weight:400;'>{m}월</div>"
-                            f"<div style='font-size:13px; color:#343a40; font-weight:600;'>{(format(v, ',.0f') if v else '-')}</div>"
-                            "</div>"
-                            for m, v in enumerate(cs_py_vals, start=1)
-                        )
 
                         st.markdown(
                             f"""<div style="background-color: #f8f9fa; border-left: 5px solid #1e3a8a; padding: 15px;
@@ -706,10 +699,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                     {cs_diff_label} <span style="color: {'#d32f2f' if cs_diff < 0 else '#1f77b4'};">
                                     {abs(cs_diff):,.0f} {unit_str} {'감소' if cs_diff < 0 else '증가'} ({cs_sign}{cs_rate_all:.1f}%)</span>
                                 </div>
-                                <div style="margin-left: auto;">
-                                    <div style="font-size: 12px; color: #495057; font-weight: 600; margin-bottom: 4px; text-align: right;">
-                                        📅 {cs_py_year}년 월별 사용량 (참고) · 합계 {cs_py_total:,.0f} {unit_str}</div>
-                                    <div style="display: grid; grid-template-columns: repeat(6, auto); gap: 4px 18px;">{cs_py_cells}</div>
+                                <div style="margin-left: auto; font-size: 15px; color: #1e3a8a; font-weight: 700;">
+                                    📅 {cs_py_year}년 누적 실적 : {cs_py_total:,.0f} {unit_str}
                                 </div></div>""",
                             unsafe_allow_html=True
                         )
