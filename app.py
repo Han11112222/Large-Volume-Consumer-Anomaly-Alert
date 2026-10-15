@@ -682,13 +682,34 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             else f"'{cs_sel}' 당월 사용량 ({cs_month}월)"
                         )
 
+                        # 참고용: 선택 고객의 전년도 1~12월 사용량 (요약 박스 우측에 표시)
+                        cs_py_year = cs_year - 1
+                        cs_py_vals = [
+                            cs_data[(cs_data["연_csv"] == cs_py_year) & (cs_data["월_csv"] == m)][val_col].sum()
+                            for m in range(1, 13)
+                        ]
+                        cs_py_total = sum(cs_py_vals)
+                        cs_py_cells = "".join(
+                            "<div style='text-align:right;'>"
+                            f"<div style='font-size:11px; color:#868e96; font-weight:400;'>{m}월</div>"
+                            f"<div style='font-size:13px; color:#343a40; font-weight:600;'>{(format(v, ',.0f') if v else '-')}</div>"
+                            "</div>"
+                            for m, v in enumerate(cs_py_vals, start=1)
+                        )
+
                         st.markdown(
                             f"""<div style="background-color: #f8f9fa; border-left: 5px solid #1e3a8a; padding: 15px;
-                                margin-bottom: 20px; border-radius: 4px;">
+                                margin-bottom: 20px; border-radius: 4px; display: flex; justify-content: space-between;
+                                align-items: center; gap: 24px; flex-wrap: wrap;">
                                 <div style="font-size: 15px; color: #1e3a8a; font-weight: 700; line-height: 1.6;">
                                     💡 [요약] 당해 실적: {cs_sum_cur:,.0f} {unit_str}<br>
                                     {cs_diff_label} <span style="color: {'#d32f2f' if cs_diff < 0 else '#1f77b4'};">
                                     {abs(cs_diff):,.0f} {unit_str} {'감소' if cs_diff < 0 else '증가'} ({cs_sign}{cs_rate_all:.1f}%)</span>
+                                </div>
+                                <div style="margin-left: auto;">
+                                    <div style="font-size: 12px; color: #495057; font-weight: 600; margin-bottom: 4px; text-align: right;">
+                                        📅 {cs_py_year}년 월별 사용량 (참고) · 합계 {cs_py_total:,.0f} {unit_str}</div>
+                                    <div style="display: grid; grid-template-columns: repeat(6, auto); gap: 4px 18px;">{cs_py_cells}</div>
                                 </div></div>""",
                             unsafe_allow_html=True
                         )
