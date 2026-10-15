@@ -404,6 +404,284 @@ for idx, rpt_tab in enumerate(rpt_tabs):
 
         st.markdown("<hr style='margin: 10px 0 30px 0;'>", unsafe_allow_html=True)
 
+        # ═════════════════════════════════════════════════════════
+        # [신규 추가] 고객 검색 (검색 → 지도 표시 → 개별 분석)
+        # ※ 모든 변수는 cs_ 접두어를 사용하므로 기존 코드와 충돌하지 않습니다.
+        # ═════════════════════════════════════════════════════════
+        st.markdown(
+            f"### 🔎 고객 검색 "
+            f"<span style='float:right; font-size:13px; font-weight:normal; color:gray;'>(단위: {unit_str})</span>",
+            unsafe_allow_html=True
+        )
+        st.caption("※ 고객명을 검색하면 해당 업체가 지도에 표시되고, 바로 아래에서 사용량 분석을 확인할 수 있습니다. (상단 기준 일자·집계 기준이 적용됩니다)")
+
+        if (not df_csv_tab.empty and "고객명" in df_csv_tab.columns and val_col in df_csv_tab.columns):
+            cs_c1, cs_c2 = st.columns([2, 1])
+            with cs_c1:
+                cs_query = st.text_input(
+                    "고객명 입력 (일부만 입력해도 검색됩니다)",
+                    placeholder="예: 대성, 한국 ...",
+                    key=f"cs_query{key_sfx}"
+                )
+            with cs_c2:
+                cs_comp_mode = st.radio(
+                    "비교 기준", ["YoY", "전월대비"], index=0, horizontal=True,
+                    key=f"cs_comp{key_sfx}"
+                )
+
+            cs_year = sel_year_rpt
+            cs_month = max_month
+            if cs_comp_mode == "YoY":
+                cs_prev_year, cs_prev_month = cs_year - 1, cs_month
+                cs_prev_col, cs_cur_col, cs_diff_label = "전년도", "당해년도", "전년대비"
+            else:
+                cs_prev_year = cs_year if cs_month > 1 else cs_year - 1
+                cs_prev_month = cs_month - 1 if cs_month > 1 else 12
+                cs_prev_col, cs_cur_col, cs_diff_label = "전월", "당월", "전월대비"
+
+            def cs_mask(df, y, m):
+                if agg_mode == "누적 실적 (1월~당월)":
+                    return (df["연_csv"] == y) & (df["월_csv"] <= m)
+                return (df["연_csv"] == y) & (df["월_csv"] == m)
+
+            def cs_find_coord(addr):
+                """주소 → (위도, 경도). 매핑되지 않으면 (None, None)"""
+                if pd.isna(addr) or not str(addr).strip():
+                    return None, None
+                if coord_df.empty or len(coord_df.columns) < 3:
+                    return None, None
+                key = re.sub(r'\(.*?\)', '', str(addr)).split(',')[0].strip().replace(" ", "")
+                if not key:
+                    return None, None
+                col_addr = coord_df[coord_df.columns[0]].astype(str).str.replace(" ", "", regex=False)
+                hit = coord_df[col_addr.str.contains(re.escape(key), na=False)]
+                if hit.empty:
+                    return None, None
+                try:
+                    return float(hit.iloc[0][coord_df.columns[1]]), float(hit.iloc[0][coord_df.columns[2]])
+                except Exception:
+                    return None, None
+
+            cs_q = cs_query.strip().replace(" ", "")
+            if not cs_q:
+                st.info("🔍 검색어를 입력하면 해당 고객이 지도에 표시되고 분석 차트가 나타납니다.")
+            else:
+                cs_name_ns = df_csv_tab["고객명"].fillna("").astype(str).str.replace(" ", "", regex=False)
+                cs_hit = df_csv_tab[cs_name_ns.str.contains(re.escape(cs_q), case=False, na=False)]
+
+                if cs_hit.empty:
+                    st.warning(f"'{cs_query}' 에 해당하는 고객이 없습니다.")
+                else:
+                    # ── 검색 결과 요약표 만들기 ──
+                    cs_cur = cs_hit[cs_mask(cs_hit, cs_year, cs_month)].groupby("고객명")[val_col].sum()
+                    cs_pre = cs_hit[cs_mask(cs_hit, cs_prev_year, cs_prev_month)].groupby("고객명")[val_col].sum()
+                    cs_info = cs_hit.drop_duplicates("고객명").set_index("고객명")
+
+                    cs_tbl = pd.DataFrame(index=cs_info.index)
+                    cs_tbl["용도"] = cs_info["용도"].fillna("") if "용도" in cs_info.columns else ""
+                    cs_tbl["도로명주소"] = cs_info["도로명주소"].fillna("") if "도로명주소" in cs_info.columns else ""
+                    cs_tbl[cs_prev_col] = cs_pre.reindex(cs_tbl.index).fillna(0)
+                    cs_tbl[cs_cur_col] = cs_cur.reindex(cs_tbl.index).fillna(0)
+                    cs_tbl["증감"] = cs_tbl[cs_cur_col] - cs_tbl[cs_prev_col]
+                    cs_tbl["증감률(%)"] = np.where(
+                        cs_tbl[cs_prev_col] > 0,
+                        cs_tbl["증감"] / cs_tbl[cs_prev_col] * 100,
+                        0
+                    )
+                    cs_tbl = cs_tbl.sort_values([cs_cur_col, cs_prev_col], ascending=False)
+
+                    cs_total_hit = len(cs_tbl)
+                    if cs_total_hit > 100:
+                        cs_tbl = cs_tbl.head(100)
+                        st.caption(f"※ 검색 결과 {cs_total_hit}개 중 사용량 상위 100개만 표시합니다. 검색어를 더 구체적으로 입력해 보세요.")
+
+                    st.success(f"✅ '{cs_query}' 검색 결과: {len(cs_tbl)}개 업체")
+
+                    cs_names = list(cs_tbl.index)
+                    cs_sel = st.selectbox(
+                        "분석할 고객 선택",
+                        cs_names,
+                        key=f"cs_sel{key_sfx}"
+                    )
+
+                    # ── 지도 표시 ──
+                    cs_rows, cs_unmapped = [], []
+                    for cs_name, cs_r in cs_tbl.iterrows():
+                        cs_lat, cs_lon = cs_find_coord(cs_r["도로명주소"])
+                        if cs_lat is None:
+                            cs_unmapped.append(cs_name)
+                            continue
+                        cs_is_sel = (cs_name == cs_sel)
+                        cs_usage = str(cs_r["용도"])
+                        if cs_is_sel:
+                            cs_color, cs_radius = [255, 140, 0, 255], 200
+                        elif cs_usage == "산업용":
+                            cs_color, cs_radius = [255, 80, 80, 200], 100
+                        elif cs_usage == "업무용":
+                            cs_color, cs_radius = [80, 150, 255, 200], 100
+                        else:
+                            cs_color, cs_radius = [120, 120, 120, 200], 100
+                        cs_rate = cs_r["증감률(%)"]
+                        cs_tip = (
+                            f"<b>[{cs_usage}] {cs_name}</b><br/>"
+                            f"{cs_prev_col}: {cs_r[cs_prev_col]:,.0f} / {cs_cur_col}: {cs_r[cs_cur_col]:,.0f}<br/>"
+                            f"증감률: <span style='color:{'red' if cs_rate < 0 else 'blue'}; font-weight:bold;'>{cs_rate:.1f}%</span><br/>"
+                            f"<span style='font-size:0.8em; color:gray;'>{cs_r['도로명주소']}</span>"
+                        )
+                        cs_rows.append({
+                            "고객명": cs_name, "lat": cs_lat, "lon": cs_lon,
+                            "color": cs_color, "radius": cs_radius, "tooltip": cs_tip,
+                            "sel": cs_is_sel
+                        })
+
+                    if cs_rows:
+                        cs_map_df = pd.DataFrame(cs_rows)
+                        # 선택 고객이 맨 위에 그려지도록 정렬
+                        cs_map_df = cs_map_df.sort_values("sel").reset_index(drop=True)
+                        cs_sel_pt = cs_map_df[cs_map_df["sel"]]
+                        if not cs_sel_pt.empty:
+                            cs_center_lat = float(cs_sel_pt.iloc[0]["lat"])
+                            cs_center_lon = float(cs_sel_pt.iloc[0]["lon"])
+                            cs_zoom = 13
+                        else:
+                            cs_center_lat = float(cs_map_df["lat"].mean())
+                            cs_center_lon = float(cs_map_df["lon"].mean())
+                            cs_zoom = 11
+
+                        cs_layer = pdk.Layer(
+                            "ScatterplotLayer", data=cs_map_df,
+                            get_position='[lon, lat]', get_color='color', get_radius='radius',
+                            pickable=True, opacity=0.8, filled=True, stroked=True,
+                            get_line_color=[255, 255, 255, 220], line_width_min_pixels=1,
+                            radius_max_pixels=40
+                        )
+                        cs_deck = pdk.Deck(
+                            map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+                            layers=[cs_layer],
+                            initial_view_state=pdk.ViewState(
+                                latitude=cs_center_lat, longitude=cs_center_lon,
+                                zoom=cs_zoom, pitch=0
+                            ),
+                            tooltip={"html": "{tooltip}", "style": {"backgroundColor": "white", "color": "black"}}
+                        )
+                        st.pydeck_chart(cs_deck)
+                        st.caption("🟠 선택 고객 / 🔴 산업용 / 🔵 업무용 / ⚪ 기타 용도")
+                    else:
+                        st.error("검색된 업체의 위경도 좌표가 매핑되어 있지 않아 지도에 표시할 수 없습니다. (아래 분석은 정상 제공됩니다)")
+
+                    if cs_unmapped and cs_rows:
+                        st.caption(f"※ 위경도 미매핑으로 지도에서 제외된 업체: {len(cs_unmapped)}개")
+
+                    # ── 검색 결과 표 ──
+                    cs_show = cs_tbl.reset_index()
+                    st.dataframe(
+                        cs_show,
+                        column_config={
+                            cs_prev_col: st.column_config.NumberColumn(format="%.0f"),
+                            cs_cur_col: st.column_config.NumberColumn(format="%.0f"),
+                            "증감": st.column_config.NumberColumn(format="%.0f"),
+                            "증감률(%)": st.column_config.NumberColumn(format="%.1f"),
+                        },
+                        hide_index=True,
+                        use_container_width=True,
+                        key=f"cs_table{key_sfx}"
+                    )
+
+                    # ── 선택 고객 개별 분석 ──
+                    st.markdown(f"#### 📈 선택 고객 분석 : {cs_sel}")
+                    cs_data = df_csv_tab[df_csv_tab["고객명"] == cs_sel]
+
+                    cs_sum_cur = cs_data[cs_mask(cs_data, cs_year, cs_month)][val_col].sum()
+                    cs_sum_prev = cs_data[cs_mask(cs_data, cs_prev_year, cs_prev_month)][val_col].sum()
+                    cs_diff = cs_sum_cur - cs_sum_prev
+                    cs_rate_all = (cs_diff / cs_sum_prev * 100) if cs_sum_prev > 0 else 0
+                    cs_sign = "+" if cs_diff > 0 else ""
+
+                    if cs_comp_mode == "YoY":
+                        cs_prev_name, cs_cur_name = f"{cs_prev_year}년", f"{cs_year}년"
+                        cs_prev_legend, cs_cur_legend = f"{cs_prev_year}년 실적", f"{cs_year}년 실적"
+                    else:
+                        cs_prev_name, cs_cur_name = f"전월({cs_prev_month}월)", f"당월({cs_month}월)"
+                        cs_prev_legend, cs_cur_legend = "전월 실적", "당월 실적"
+
+                    cs_period_title = (
+                        f"'{cs_sel}' 누적 사용량 ({cs_month}월 누적)"
+                        if agg_mode == "누적 실적 (1월~당월)"
+                        else f"'{cs_sel}' 당월 사용량 ({cs_month}월)"
+                    )
+
+                    st.markdown(
+                        f"""<div style="background-color: #f8f9fa; border-left: 5px solid #1e3a8a; padding: 15px;
+                            margin-bottom: 20px; border-radius: 4px;">
+                            <div style="font-size: 15px; color: #1e3a8a; font-weight: 700; line-height: 1.6;">
+                                💡 [요약] 당해 실적: {cs_sum_cur:,.0f} {unit_str}<br>
+                                {cs_diff_label} <span style="color: {'#d32f2f' if cs_diff < 0 else '#1f77b4'};">
+                                {abs(cs_diff):,.0f} {unit_str} {'감소' if cs_diff < 0 else '증가'} ({cs_sign}{cs_rate_all:.1f}%)</span>
+                            </div></div>""",
+                        unsafe_allow_html=True
+                    )
+
+                    cs_months = list(range(1, cs_month + 1))
+                    cs_vals_cur = [
+                        cs_data[(cs_data["연_csv"] == cs_year) & (cs_data["월_csv"] == m)][val_col].sum()
+                        for m in cs_months
+                    ]
+                    if cs_comp_mode == "YoY":
+                        cs_vals_prev = [
+                            cs_data[(cs_data["연_csv"] == cs_year - 1) & (cs_data["월_csv"] == m)][val_col].sum()
+                            for m in cs_months
+                        ]
+                    else:
+                        cs_vals_prev = []
+                        for m in cs_months:
+                            if m > 1:
+                                cs_vals_prev.append(
+                                    cs_data[(cs_data["연_csv"] == cs_year) & (cs_data["월_csv"] == m - 1)][val_col].sum())
+                            else:
+                                cs_vals_prev.append(
+                                    cs_data[(cs_data["연_csv"] == cs_year - 1) & (cs_data["월_csv"] == 12)][val_col].sum())
+
+                    cs_a1, cs_a2 = st.columns([1, 2])
+                    with cs_a1:
+                        cs_fig1 = go.Figure()
+                        cs_fig1.update_layout(title=cs_period_title, margin=dict(t=50, b=20, l=40, r=10), height=350)
+                        cs_fig1.add_trace(go.Bar(
+                            x=[cs_prev_name, cs_cur_name], y=[cs_sum_prev, cs_sum_cur],
+                            marker_color=[COLOR_PREV, COLOR_ACT],
+                            text=[f"{cs_sum_prev:,.0f}", f"{cs_sum_cur:,.0f}"],
+                            textposition='auto'
+                        ))
+                        cs_fig1.add_annotation(
+                            x=0.5, y=1.05, xref="paper", yref="paper",
+                            text=f"<b>{cs_diff_label} 증감: {cs_sign}{cs_diff:,.0f} ({cs_rate_all:.1f}%)</b>",
+                            showarrow=False,
+                            font=dict(size=13, color="#d32f2f" if cs_diff < 0 else "#1f77b4"),
+                            bgcolor="#f8f9fa", bordercolor="#d0d7e5", borderwidth=1, borderpad=4
+                        )
+                        st.plotly_chart(cs_fig1, key=f"cs_fig_cum{key_sfx}_{cs_sel}", use_container_width=True)
+
+                    with cs_a2:
+                        cs_fig2 = go.Figure()
+                        cs_fig2.update_layout(
+                            title=f"'{cs_sel}' 월별 사용량 추이", barmode='group',
+                            xaxis=dict(tickmode='linear', tick0=1, dtick=1),
+                            margin=dict(t=50, b=20, l=40, r=10), height=350,
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                        )
+                        cs_fig2.add_trace(go.Bar(
+                            x=cs_months, y=cs_vals_prev, name=cs_prev_legend, marker_color=COLOR_PREV,
+                            text=[f"{v:,.0f}" if v > 0 else "" for v in cs_vals_prev],
+                            textposition='auto', textfont=dict(size=11)))
+                        cs_fig2.add_trace(go.Bar(
+                            x=cs_months, y=cs_vals_cur, name=cs_cur_legend, marker_color=COLOR_ACT,
+                            text=[f"{v:,.0f}" if v > 0 else "" for v in cs_vals_cur],
+                            textposition='auto', textfont=dict(size=11)))
+                        st.plotly_chart(cs_fig2, key=f"cs_fig_mon{key_sfx}_{cs_sel}", use_container_width=True)
+        else:
+            st.info("고객 검색을 위한 업종별 CSV 데이터('고객명' 컬럼)가 없습니다.")
+
+        st.markdown("<hr style='border-top: 2px solid #1e3a8a; margin: 40px 0 30px 0;'>", unsafe_allow_html=True)
+
         # ─────────────────────────────────────────────────────────
         # 1. 지도
         # ─────────────────────────────────────────────────────────
