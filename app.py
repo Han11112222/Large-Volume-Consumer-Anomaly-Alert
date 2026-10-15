@@ -404,7 +404,11 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         with c_m:
             sel_month_str = st.selectbox("기준 월", [f"{m}월" for m in range(1, 13)], index=default_m_index, key=f"rpt_mo{key_sfx}")
         with c_agg:
-            agg_mode = st.radio("집계 기준", ["당월 실적", "누적 실적 (1월~당월)"], index=0, horizontal=True, key=f"agg_mode_{key_sfx}")
+            # 2번 메뉴(개별 고객 검색)에서는 '누적 실적'이 기본값, 1번 메뉴는 기존과 동일
+            _is_cs_page = (page_sel == "2. 개별 고객 검색")
+            agg_mode = st.radio("집계 기준", ["당월 실적", "누적 실적 (1월~당월)"],
+                                index=1 if _is_cs_page else 0, horizontal=True,
+                                key=f"agg_mode_{key_sfx}" + ("_cs" if _is_cs_page else ""))
 
         max_month = int(sel_month_str.replace("월", ""))
         report_db_key = f"{sel_year_rpt}_{max_month}M_{unit_str}_yoy_only"
