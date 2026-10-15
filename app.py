@@ -429,15 +429,36 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 return up
 
             def cs_show_df(df, row_style_fn, fmt, key, height=None):
-                """행 단위 배경 하이라이트를 적용해 표 출력 (스타일 적용 실패 시 일반 표로 대체)"""
-                fmt_use = {k: v for k, v in fmt.items() if k in df.columns}
-                kw = dict(hide_index=True, use_container_width=True, key=key)
-                if height:
-                    kw["height"] = height
-                try:
-                    st.dataframe(df.style.apply(row_style_fn, axis=1).format(fmt_use), **kw)
-                except Exception:
-                    st.dataframe(df, **kw)
+                """행 단위 배경 하이라이트를 적용한 HTML 표 출력
+                (st.dataframe/Styler를 쓰지 않으므로 브라우저 렌더링 문제가 없음)"""
+                import html as _html
+                th_css = ("padding:6px 10px; text-align:left; background-color:#f1f3f5; color:#212529; "
+                          "border-bottom:2px solid #ced4da; position:sticky; top:0; white-space:nowrap;")
+                head = "".join(f"<th style='{th_css}'>{_html.escape(str(c))}</th>" for c in df.columns)
+                num_cols = {c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])}
+                body = []
+                for _, row in df.iterrows():
+                    css = row_style_fn(row)[0]
+                    tds = []
+                    for c in df.columns:
+                        v = row[c]
+                        if pd.isna(v):
+                            txt = ""
+                        elif c in fmt:
+                            txt = fmt[c].format(v)
+                        else:
+                            txt = str(v)
+                        td_css = ("padding:5px 10px; border-bottom:1px solid #e9ecef; white-space:nowrap; "
+                                  f"text-align:{'right' if c in num_cols else 'left'};")
+                        tds.append(f"<td style='{td_css}'>{_html.escape(txt)}</td>")
+                    body.append(f"<tr style='background-color:#ffffff; color:#212529; {css}'>{''.join(tds)}</tr>")
+                max_h = f"max-height:{height}px;" if height else ""
+                st.markdown(
+                    f"<div style='overflow:auto; {max_h} border:1px solid #dee2e6; border-radius:6px;'>"
+                    f"<table style='border-collapse:collapse; width:100%; font-size:13px;'>"
+                    f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div>",
+                    unsafe_allow_html=True
+                )
 
             # ═════════════════════════════════════════════════════════
             # [신규 추가] 고객 검색 (검색 → 지도 표시 → 개별 분석)
