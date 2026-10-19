@@ -533,15 +533,21 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         years_available = [2024, 2025, 2026]
         default_y_index = len(years_available) - 1
         default_m_index = 2
+        excel_latest_ym = None   # 엑셀 실적이 있는 가장 최근 (연, 월)
 
         if not df_long_rpt.empty:
             years_available = sorted(df_long_rpt["연"].unique().tolist())
-            actual_data = df_long_rpt[(df_long_rpt["계획/실적"] == "실적") & (df_long_rpt["값"] > 0)]
+            # 대시보드 분석 대상(산업용·업무용)의 실적이 있는 가장 최근 월 기준 (없으면 전체 그룹 기준)
+            actual_data = df_long_rpt[(df_long_rpt["계획/실적"] == "실적") & (df_long_rpt["값"] > 0)
+                                      & (df_long_rpt["그룹"].isin(["산업용", "업무용"]))]
+            if actual_data.empty:
+                actual_data = df_long_rpt[(df_long_rpt["계획/실적"] == "실적") & (df_long_rpt["값"] > 0)]
             if not actual_data.empty:
                 max_year = actual_data["연"].max()
                 max_month_val = actual_data[actual_data["연"] == max_year]["월"].max()
                 default_y_index = years_available.index(max_year) if max_year in years_available else len(years_available) - 1
                 default_m_index = int(max_month_val - 1)
+                excel_latest_ym = (int(max_year), int(max_month_val))
 
         df_csv_tab = df_csv.copy()
         if not df_csv_tab.empty:
@@ -576,11 +582,17 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             df_csv_tab["연_csv"] = df_csv_tab["날짜_파싱"].dt.year
             df_csv_tab["월_csv"] = df_csv_tab["날짜_파싱"].dt.month
 
-            csv_max_date = df_csv_tab["날짜_파싱"].max()
+            # 사용량이 실제로 있는(>0) 가장 최근 월 기준 (0·빈 값으로 채워진 미래 월은 제외)
+            _csv_pos = (df_csv_tab[pd.to_numeric(df_csv_tab[val_col], errors="coerce").fillna(0) > 0]
+                        if val_col in df_csv_tab.columns else df_csv_tab)
+            csv_max_date = (_csv_pos if not _csv_pos.empty else df_csv_tab)["날짜_파싱"].max()
             if pd.notna(csv_max_date):
-                if csv_max_date.year in years_available:
-                    default_y_index = years_available.index(csv_max_date.year)
-                default_m_index = int(csv_max_date.month - 1)
+                _ym = (int(csv_max_date.year), int(csv_max_date.month))
+                if excel_latest_ym is not None:   # 엑셀 실적이 더 이전 월까지만 있으면 그 월을 기본값으로
+                    _ym = min(_ym, excel_latest_ym)
+                if _ym[0] in years_available:
+                    default_y_index = years_available.index(_ym[0])
+                default_m_index = int(_ym[1] - 1)
 
         c_y, c_m, c_agg, c_empty = st.columns([1, 1, 2, 1])
         with c_y:
