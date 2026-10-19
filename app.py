@@ -163,6 +163,31 @@ def build_long_dict(sheets: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
         long_dict["열량"] = make_long(sheets["계획_열량"], sheets["실적_열량"])
     return long_dict
 
+@st.cache_data(show_spinner=False, max_entries=2)
+def load_repo_usage_csvs(repo_dir_str: str, files_sig: tuple) -> pd.DataFrame:
+    """레포의 가정용외*.csv 를 한 번만 읽고 숫자 정리까지 끝낸 결과를 캐시 (화면 조작 때마다 다시 읽지 않음)"""
+    csv_list = []
+    for fp in files_sig:
+        p = Path(repo_dir_str) / fp[0]
+        temp_df = None
+        for enc in ("utf-8-sig", "cp949"):
+            try:
+                temp_df = pd.read_csv(p, encoding=enc, thousands=',')
+                break
+            except Exception:
+                temp_df = None
+        if temp_df is not None:
+            temp_df.columns = temp_df.columns.str.strip()
+            csv_list.append(temp_df)
+    if not csv_list:
+        return pd.DataFrame()
+    out = pd.concat(csv_list, ignore_index=True)
+    for c in ("사용량(mj)", "사용량(m3)"):
+        if c in out.columns:
+            out[c] = out[c].apply(clean_korean_finance_number)
+    return out
+
+
 def load_safe_csv(file_bytes) -> pd.DataFrame:
     for enc in ["utf-8-sig", "cp949", "utf-8", "euc-kr"]:
         try:
@@ -483,32 +508,22 @@ if excel_bytes is not None:
     long_dict_rpt = build_long_dict(sheets_rpt)
 
 df_csv = pd.DataFrame()
+_csv_cleaned = False
 if src_csv == "레포 파일 사용":
     try:
         repo_dir = Path(__file__).parent
         all_csvs = list(repo_dir.glob("*가정용외*.csv")) + list(repo_dir.glob("가정용외*.csv"))
-        all_csvs = list(set(all_csvs))
-        csv_list = []
-        for p in all_csvs:
-            try:
-                temp_df = pd.read_csv(p, encoding="utf-8-sig", thousands=',')
-                temp_df.columns = temp_df.columns.str.strip()
-                csv_list.append(temp_df)
-            except Exception:
-                try:
-                    temp_df = pd.read_csv(p, encoding="cp949", thousands=',')
-                    temp_df.columns = temp_df.columns.str.strip()
-                    csv_list.append(temp_df)
-                except Exception:
-                    pass
-        if csv_list: df_csv = pd.concat(csv_list, ignore_index=True)
+        all_csvs = sorted(set(all_csvs))
+        _sig = tuple((p.name, p.stat().st_mtime_ns, p.stat().st_size) for p in all_csvs)
+        df_csv = load_repo_usage_csvs(str(repo_dir), _sig)
+        _csv_cleaned = not df_csv.empty
     except Exception:
         pass
 
 if df_csv.empty and 'merged_csv_df' in st.session_state:
     df_csv = st.session_state['merged_csv_df'].copy()
 
-if not df_csv.empty:
+if not df_csv.empty and not _csv_cleaned:
     if "사용량(mj)" in df_csv.columns: df_csv["사용량(mj)"] = df_csv["사용량(mj)"].apply(clean_korean_finance_number)
     if "사용량(m3)" in df_csv.columns: df_csv["사용량(m3)"] = df_csv["사용량(m3)"].apply(clean_korean_finance_number)
 
