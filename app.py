@@ -549,6 +549,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         default_y_index = len(years_available) - 1
         default_m_index = 2
         excel_latest_ym = None   # 엑셀 실적이 있는 가장 최근 (연, 월)
+        _auto_ym_msg = ""
 
         if not df_long_rpt.empty:
             years_available = sorted(df_long_rpt["연"].unique().tolist())
@@ -598,8 +599,16 @@ for idx, rpt_tab in enumerate(rpt_tabs):
             df_csv_tab["월_csv"] = df_csv_tab["날짜_파싱"].dt.month
 
             # 사용량이 실제로 있는(>0) 가장 최근 월 기준 (0·빈 값으로 채워진 미래 월은 제외)
-            _csv_pos = (df_csv_tab[pd.to_numeric(df_csv_tab[val_col], errors="coerce").fillna(0) > 0]
-                        if val_col in df_csv_tab.columns else df_csv_tab)
+            _csv_tgt = df_csv_tab
+            if "용도" in df_csv_tab.columns:   # 분석 대상(산업용·업무용) 행만 기준으로 삼음
+                _m_tgt = df_csv_tab["용도"].isin(["산업용", "업무용"])
+                if "상품명" in df_csv_tab.columns:
+                    _m_tgt = _m_tgt | (df_csv_tab["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
+                                       .isin(["냉난방용(업무)", "업무난방용", "주한미군"]))
+                if _m_tgt.any():
+                    _csv_tgt = df_csv_tab[_m_tgt]
+            _csv_pos = (_csv_tgt[pd.to_numeric(_csv_tgt[val_col], errors="coerce").fillna(0) > 0]
+                        if val_col in _csv_tgt.columns else _csv_tgt)
             csv_max_date = (_csv_pos if not _csv_pos.empty else df_csv_tab)["날짜_파싱"].max()
             if pd.notna(csv_max_date):
                 _ym = (int(csv_max_date.year), int(csv_max_date.month))
@@ -608,6 +617,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 if _ym[0] in years_available:
                     default_y_index = years_available.index(_ym[0])
                 default_m_index = int(_ym[1] - 1)
+                _auto_ym_msg = (f"자동 선택 기준: CSV 실적 최신 {int(csv_max_date.year)}-{int(csv_max_date.month):02d}"
+                                + (f" / 엑셀 실적 최신 {excel_latest_ym[0]}-{excel_latest_ym[1]:02d}" if excel_latest_ym else " / 엑셀 실적 없음"))
 
         c_y, c_m, c_agg, c_empty = st.columns([1, 1, 2, 1])
         with c_y:
@@ -617,6 +628,8 @@ for idx, rpt_tab in enumerate(rpt_tabs):
         with c_agg:
             agg_mode = st.radio("집계 기준", ["당월 실적", "누적 실적 (1월~당월)"], index=0, horizontal=True, key=f"agg_mode_{key_sfx}")
 
+        if _auto_ym_msg:
+            st.caption(_auto_ym_msg)
         max_month = int(sel_month_str.replace("월", ""))
         report_db_key = f"{sel_year_rpt}_{max_month}M_{unit_str}_yoy_only"
         if report_db_key not in comments_db: comments_db[report_db_key] = {}
@@ -772,7 +785,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             # ✅ use_container_width=True (1.63.0에서 유효한 파라미터)
                             draw_route = st.button(
                                 "🚗 선택 업체 최적 동선(실제 도로) 그리기",
-                                use_container_width=True,
+                                width="stretch",
                                 key=f"draw_route_btn_{key_sfx}"
                             )
                             start_pt_data = pd.DataFrame([{
@@ -827,18 +840,22 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             tooltip={"html": "{tooltip}", "style": {"backgroundColor": "white", "color": "black"}}
                         )
                         if route_anim is not None:
-                            st.components.v1.html(
-                                build_route_html(start_lat, start_lon, route_anim["stops"], route_anim["route"],
-                                                 route_anim["idx"], dark=(map_style_ui == "다크 모드 (기본)")),
-                                height=660
-                            )
-                            st.markdown("**🚩 방문 순서** (🏢 대성에너지 서부지사 출발 → 가까운 업체부터 차례로 방문)")
-                            _order_md = "| 순서 | 고객명 | 증감률 | 도로명주소 |\n|:--:|:--|--:|:--|\n"
-                            _order_md += "| 🏢 출발 | 대성에너지 서부지사 | - | - |\n"
-                            for _n, _s in enumerate(route_anim["stops"], start=1):
-                                _order_md += (f"| {_n} | {str(_s['고객명']).replace('|', '/')} | {_s['증감률(%)']:.1f}% | "
-                                              f"{str(_s['도로명주소']).replace('|', '/')} |\n")
-                            st.markdown(_order_md)
+                            try:
+                                st.components.v1.html(
+                                    build_route_html(start_lat, start_lon, route_anim["stops"], route_anim["route"],
+                                                     route_anim["idx"], dark=(map_style_ui == "다크 모드 (기본)")),
+                                    height=660
+                                )
+                                st.markdown("**🚩 방문 순서** (🏢 대성에너지 서부지사 출발 → 가까운 업체부터 차례로 방문)")
+                                _order_md = "| 순서 | 고객명 | 증감률 | 도로명주소 |\n|:--:|:--|--:|:--|\n"
+                                _order_md += "| 🏢 출발 | 대성에너지 서부지사 | - | - |\n"
+                                for _n, _s in enumerate(route_anim["stops"], start=1):
+                                    _order_md += (f"| {_n} | {str(_s['고객명']).replace('|', '/')} | {_s['증감률(%)']:.1f}% | "
+                                                  f"{str(_s['도로명주소']).replace('|', '/')} |\n")
+                                st.markdown(_order_md)
+                            except Exception as _route_err:   # 애니메이션 지도 실패 시 기존 지도로 대체
+                                st.warning(f"동선 애니메이션을 표시하지 못해 기본 지도로 대체합니다. ({type(_route_err).__name__}: {_route_err})")
+                                st.pydeck_chart(deck_obj)
                         else:
                             st.pydeck_chart(deck_obj)
 
@@ -880,7 +897,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             },
                             disabled=[c for c in df_show.columns if c != "선택"],
                             hide_index=True,
-                            use_container_width=True,
+                            width="stretch",
                             key=editor_key,
                         )
                     else:
@@ -1008,7 +1025,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     textposition='auto', textfont=dict(size=14)
                 ))
                 # ✅ use_container_width=True (1.63.0 정상 파라미터)
-                st.plotly_chart(fig_c, key=f"fig_c_{usage_name}_{key_sfx_inner}", use_container_width=True)
+                st.plotly_chart(fig_c, key=f"fig_c_{usage_name}_{key_sfx_inner}", width="stretch")
 
             with col_m:
                 st.markdown(f"**■ 월별 실적 추이**", unsafe_allow_html=True)
@@ -1024,7 +1041,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                 fig_m.add_trace(go.Bar(x=months_list, y=vals_act, name=curr_legend, marker_color=COLOR_ACT,
                     text=[f"{v:,.0f}" if v > 0 else "" for v in vals_act], textposition='auto', textfont=dict(size=11)))
                 # ✅ use_container_width=True
-                st.plotly_chart(fig_m, key=f"fig_m_{usage_name}_{key_sfx_inner}", use_container_width=True)
+                st.plotly_chart(fig_m, key=f"fig_m_{usage_name}_{key_sfx_inner}", width="stretch")
 
             if not df_csv_tab.empty and val_col in df_csv_tab.columns:
                 if "상품명" in df_csv_tab.columns:
@@ -1077,7 +1094,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     fig_ind.update_layout(barmode='group', margin=dict(t=10, b=10, l=10, r=10), height=420,
                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                     # ✅ use_container_width=True
-                    st.plotly_chart(fig_ind, key=f"fig_ind_{usage_name}_{key_sfx_inner}", use_container_width=True)
+                    st.plotly_chart(fig_ind, key=f"fig_ind_{usage_name}_{key_sfx_inner}", width="stretch")
 
                 st.markdown("<hr style='border-top: 1px dashed #ccc; margin: 30px 0;'>", unsafe_allow_html=True)
                 st.markdown(f"**🔍 {usage_name} 개별 고객 상세 차트**")
@@ -1129,7 +1146,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                 bgcolor="#f8f9fa", bordercolor="#d0d7e5", borderwidth=1, borderpad=4
                             )
                             # ✅ use_container_width=True
-                            st.plotly_chart(fig_cust_cum, key=f"fig_cum_{usage_name}_{key_sfx_inner}_{sel_cust}", use_container_width=True)
+                            st.plotly_chart(fig_cust_cum, key=f"fig_cum_{usage_name}_{key_sfx_inner}_{sel_cust}", width="stretch")
 
                         with cc2:
                             fig_cust_mon = go.Figure()
@@ -1156,7 +1173,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                 marker_color=COLOR_ACT, text=[f"{v:,.0f}" if v > 0 else "" for v in cur_vals_c],
                                 textposition='auto', textfont=dict(size=11)))
                             # ✅ use_container_width=True
-                            st.plotly_chart(fig_cust_mon, key=f"fig_mon_{usage_name}_{key_sfx_inner}_{sel_cust}", use_container_width=True)
+                            st.plotly_chart(fig_cust_mon, key=f"fig_mon_{usage_name}_{key_sfx_inner}_{sel_cust}", width="stretch")
 
         render_full_usage_report("산업용", "2", key_sfx, "ind")
         st.markdown("<hr style='margin: 50px 0; border-top: 2px solid #ccc;'>", unsafe_allow_html=True)
