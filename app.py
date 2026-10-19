@@ -223,6 +223,198 @@ def get_kakao_route(start_lon, start_lat, end_lon, end_lat):
     except Exception:
         return None
 
+def build_route_html(start_lat, start_lon, stops, route_lonlat, stop_idx, dark=True):
+    """동선 지도(출발지·방문 순서 번호·자동차 이동 애니메이션)를 Leaflet HTML 한 장으로 만든다.
+    stops: [{'고객명','lat','lon','증감률(%)','도로명주소'}, ...] (방문 순서대로)
+    route_lonlat: [[lon, lat], ...] 전체 경로 좌표,  stop_idx: 각 방문지가 경로 좌표에서 끝나는 위치(인덱스)"""
+    pts, idx_map = [], []
+    for lon, lat in route_lonlat:
+        p = [round(float(lat), 5), round(float(lon), 5)]
+        if not pts or pts[-1] != p:
+            pts.append(p)
+        idx_map.append(len(pts) - 1)
+    if not pts:
+        pts = [[float(start_lat), float(start_lon)]]
+    if len(pts) < 2:
+        pts.append(list(pts[0]))
+    stops_json = []
+    for n, (s, i) in enumerate(zip(stops, stop_idx), start=1):
+        try:
+            rate = round(float(s.get("증감률(%)", 0)), 1)
+        except Exception:
+            rate = 0.0
+        stops_json.append({
+            "n": n, "name": str(s.get("고객명", "")), "rate": rate,
+            "addr": str(s.get("도로명주소", "")),
+            "lat": float(s["lat"]), "lon": float(s["lon"]),
+            "idx": idx_map[min(int(i), len(idx_map) - 1)] if idx_map else 0,
+        })
+    tile = ("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" if dark
+            else "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png")
+    data = {"start": {"lat": float(start_lat), "lon": float(start_lon)},
+            "route": pts, "stops": stops_json, "tile": tile}
+    data_js = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+    return ROUTE_HTML_TEMPLATE.replace("__DATA__", data_js)
+
+
+ROUTE_HTML_TEMPLATE = r"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+html,body{margin:0;height:100%;font-family:"Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif;}
+#map{position:absolute;top:0;left:0;right:0;bottom:0;background:#111;}
+.pin{display:flex;align-items:center;justify-content:center;border-radius:50%;font-weight:700;
+     border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.55);box-sizing:border-box;}
+.pin.num{width:28px;height:28px;background:#ff5252;color:#fff;font-size:14px;}
+.pin.num.visited{background:#2ecc71;}
+.pin.start{width:36px;height:36px;background:#ffc107;font-size:19px;border-color:#000;}
+#ctl{position:absolute;top:10px;right:10px;z-index:1000;background:rgba(255,255,255,.94);border-radius:8px;
+     padding:7px 10px;font-size:13px;box-shadow:0 1px 6px rgba(0,0,0,.4);color:#222;}
+#ctl button{font-size:13px;padding:4px 9px;margin-right:4px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;}
+#ctl select{font-size:13px;}
+#status{position:absolute;left:10px;bottom:22px;z-index:1000;background:rgba(0,0,0,.72);color:#fff;
+        border-radius:8px;padding:7px 12px;font-size:13px;max-width:70%;line-height:1.45;}
+#carwrap{width:26px;height:44px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.6));}
+</style></head><body>
+<div id="map"></div>
+<div id="ctl"><button id="play">⏸ 일시정지</button><button id="restart">↺ 처음부터</button>속도
+<select id="spd"><option value="1">1x</option><option value="2">2x</option><option value="4">4x</option></select></div>
+<div id="status"></div>
+<script>
+const DATA = __DATA__;
+(function(){
+if (typeof L === 'undefined') {
+  document.body.innerHTML = '<div style="padding:20px;font-size:14px">지도 라이브러리를 불러오지 못했습니다. (cdnjs.cloudflare.com 접속 가능 여부를 확인해 주세요)</div>';
+  return;
+}
+const START = DATA.start, ROUTE = DATA.route, STOPS = DATA.stops;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const map = L.map('map', {preferCanvas:true, zoomSnap:0.25});
+L.tileLayer(DATA.tile, {subdomains:'abcd', maxZoom:19, attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
+const all = ROUTE.concat([[START.lat, START.lon]], STOPS.map(s => [s.lat, s.lon]));
+map.fitBounds(L.latLngBounds(all), {padding:[55,55]});
+
+L.polyline(ROUTE, {color:'#2ecc71', weight:4, opacity:0.35}).addTo(map);
+const done = L.polyline([], {color:'#2ecc71', weight:5, opacity:0.95}).addTo(map);
+const head = L.polyline([], {color:'#2ecc71', weight:5, opacity:0.95}).addTo(map);
+
+// 출발지
+L.marker([START.lat, START.lon], {
+  icon: L.divIcon({className:'', html:'<div class="pin start">🏢</div>', iconSize:[36,36], iconAnchor:[18,18]}),
+  zIndexOffset: 500
+}).addTo(map).bindTooltip('🏢 대성에너지 서부지사 (출발지)', {direction:'top', offset:[0,-18]});
+
+// 방문 순서 번호
+const pins = STOPS.map(s => {
+  const m = L.marker([s.lat, s.lon], {
+    icon: L.divIcon({className:'', html:'<div class="pin num">'+s.n+'</div>', iconSize:[28,28], iconAnchor:[14,14]}),
+    zIndexOffset: 400
+  }).addTo(map);
+  m.bindTooltip('<b>'+s.n+'번째 방문 · '+esc(s.name)+'</b><br>증감률 '+s.rate.toFixed(1)+'%<br><span style="font-size:11px;color:#666">'+esc(s.addr)+'</span>',
+                {direction:'top', offset:[0,-14]});
+  return m.getElement() ? m.getElement().firstChild : null;
+});
+
+// 자동차 아이콘 (위에서 본 모양, 진행 방향으로 회전)
+const carSvg = '<svg width="26" height="44" viewBox="0 0 26 44">'
+  + '<rect x="0" y="7" width="4" height="10" rx="1.5" fill="#111"/><rect x="22" y="7" width="4" height="10" rx="1.5" fill="#111"/>'
+  + '<rect x="0" y="28" width="4" height="10" rx="1.5" fill="#111"/><rect x="22" y="28" width="4" height="10" rx="1.5" fill="#111"/>'
+  + '<rect x="3" y="2" width="20" height="40" rx="9" fill="#ff3d3d" stroke="#fff" stroke-width="2"/>'
+  + '<rect x="6.5" y="10" width="13" height="8" rx="2.5" fill="#1b2a38"/>'
+  + '<rect x="6.5" y="28" width="13" height="6" rx="2.5" fill="#1b2a38"/>'
+  + '<rect x="7" y="19.5" width="12" height="7" rx="2" fill="#ff8a8a"/></svg>';
+const car = L.marker([START.lat, START.lon], {
+  icon: L.divIcon({className:'', html:'<div id="carwrap">'+carSvg+'</div>', iconSize:[26,44], iconAnchor:[13,22]}),
+  zIndexOffset: 1000, interactive: false
+}).addTo(map);
+const carEl = car.getElement().firstChild;
+
+// 거리 계산
+const R = 6371000, rad = Math.PI/180;
+function hav(a,b){const dLat=(b[0]-a[0])*rad,dLon=(b[1]-a[1])*rad;
+  const x=Math.sin(dLat/2)**2+Math.cos(a[0]*rad)*Math.cos(b[0]*rad)*Math.sin(dLon/2)**2;return 2*R*Math.asin(Math.sqrt(x));}
+function bearing(a,b){const y=Math.sin((b[1]-a[1])*rad)*Math.cos(b[0]*rad);
+  const x=Math.cos(a[0]*rad)*Math.sin(b[0]*rad)-Math.sin(a[0]*rad)*Math.cos(b[0]*rad)*Math.cos((b[1]-a[1])*rad);
+  return Math.atan2(y,x)/rad;}
+const D = [0];
+for (let i=1;i<ROUTE.length;i++) D.push(D[i-1]+hav(ROUTE[i-1],ROUTE[i]));
+const TOTAL = D[D.length-1] || 1;
+const stopD = STOPS.map(s => D[Math.min(s.idx, D.length-1)]);
+const SEC = Math.min(45, Math.max(14, TOTAL/1000*1.6));   // 1x 속도에서 전체 주행 시간(초)
+const V = TOTAL / SEC;
+const PAUSE = 1200;                                       // 방문지 도착 후 정차 시간(ms)
+
+let seg = 0;
+function posAt(s){
+  while (seg < ROUTE.length-2 && D[seg+1] < s) seg++;
+  const a = ROUTE[seg], b = ROUTE[seg+1] || a;
+  const len = (D[seg+1]-D[seg]) || 1;
+  const t = Math.min(1, Math.max(0, (s-D[seg])/len));
+  return {p:[a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t], br:bearing(a,b), len:len};
+}
+
+const statusEl = document.getElementById('status');
+const playBtn = document.getElementById('play');
+let s=0, nextStop=0, pauseUntil=0, playing=true, mult=1, last=null, trailIdx=0, rot=0, fin=false, restartAt=0, needMoving=false;
+
+function setMoving(){
+  if (nextStop < STOPS.length)
+    statusEl.innerHTML = '🚗 <b>'+STOPS[nextStop].n+'번째</b> '+esc(STOPS[nextStop].name)+' 방향으로 이동 중 ('+nextStop+'/'+STOPS.length+' 방문 완료)';
+}
+function place(dist){
+  const r = posAt(dist);
+  car.setLatLng(r.p);
+  while (trailIdx < ROUTE.length && D[trailIdx] <= dist) { done.addLatLng(ROUTE[trailIdx]); trailIdx++; }
+  head.setLatLngs([ROUTE[Math.max(0, trailIdx-1)], r.p]);
+  if (r.len > 0.5) { const d=((r.br-rot+540)%360)-180; rot += d*0.2; carEl.style.transform='rotate('+rot+'deg)'; }
+}
+function reset(){
+  s=0; nextStop=0; pauseUntil=0; trailIdx=0; seg=0; fin=false; needMoving=false;
+  done.setLatLngs([]); head.setLatLngs([]);
+  pins.forEach(p => { if (p) p.classList.remove('visited'); });
+  place(0); setMoving();
+}
+function arrive(i){
+  if (pins[i]) pins[i].classList.add('visited');
+  statusEl.innerHTML = '📍 <b>'+STOPS[i].n+'번째</b> '+esc(STOPS[i].name)+' 도착 ('+(i+1)+'/'+STOPS.length+')';
+  needMoving = (i+1 < STOPS.length);
+}
+function frame(ts){
+  if (last === null) last = ts;
+  let dt = (ts-last)/1000; last = ts; if (dt > 0.2) dt = 0.2;
+  if (playing) {
+    if (fin) {
+      if (ts > restartAt) reset();
+    } else if (ts >= pauseUntil) {
+      if (needMoving) { setMoving(); needMoving = false; }
+      s += V*mult*dt;
+      while (nextStop < STOPS.length && s >= stopD[nextStop]) {
+        s = stopD[nextStop]; arrive(nextStop); nextStop++; pauseUntil = ts + PAUSE;
+        if (stopD[nextStop] === s) continue; else break;
+      }
+      if (s >= TOTAL && nextStop >= STOPS.length) {
+        s = TOTAL; fin = true; restartAt = ts + 3500;
+        statusEl.innerHTML = '✅ 모든 업체 방문 완료 · 총 이동거리 약 '+(TOTAL/1000).toFixed(1)+' km';
+      }
+      place(s);
+    } else {
+      place(s);
+    }
+  }
+  requestAnimationFrame(frame);
+}
+playBtn.onclick = () => { playing = !playing; playBtn.textContent = playing ? '⏸ 일시정지' : '▶ 재생'; };
+document.getElementById('restart').onclick = () => { reset(); playing = true; playBtn.textContent = '⏸ 일시정지'; };
+document.getElementById('spd').onchange = e => { mult = parseFloat(e.target.value); };
+reset();
+requestAnimationFrame(frame);
+})();
+</script></body></html>
+"""
+
 
 # ─────────────────────────────────────────────────────────
 # 사이드바
@@ -547,6 +739,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                         )
                         layers = [layer]
                         start_lat, start_lon = 35.8660194, 128.5332943
+                        route_anim = None   # 동선 그리기 결과(방문 순서·경로) 보관
 
                         if selected_indices:
                             # ✅ use_container_width=True (1.63.0에서 유효한 파라미터)
@@ -568,7 +761,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             ))
                             if draw_route:
                                 with st.spinner("카카오 모빌리티 API를 통해 최적 도로 경로를 탐색 중입니다..."):
-                                    unvisited = map_df[['lon', 'lat', '고객명']].to_dict('records')
+                                    unvisited = map_df[['lon', 'lat', '고객명', '증감률(%)', '도로명주소']].to_dict('records')
                                     curr_lat_r, curr_lon_r = start_lat, start_lon
                                     ordered_stops = []
                                     while unvisited:
@@ -577,11 +770,13 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                         curr_lat_r, curr_lon_r = nearest['lat'], nearest['lon']
                                         unvisited.remove(nearest)
                                     full_route_coords = []
+                                    stop_end_idx = []
                                     current_pt = [start_lon, start_lat]
                                     for stop in ordered_stops:
                                         target_pt = [stop['lon'], stop['lat']]
                                         route_segment = get_kakao_route(current_pt[0], current_pt[1], target_pt[0], target_pt[1])
                                         full_route_coords.extend(route_segment if route_segment else [current_pt, target_pt])
+                                        stop_end_idx.append(len(full_route_coords) - 1)
                                         current_pt = target_pt
                                     if full_route_coords:
                                         path_data = pd.DataFrame([{"path": full_route_coords, "color": [46, 204, 113, 255]}])
@@ -590,6 +785,7 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                                             get_path="path", get_color="color",
                                             width_scale=20, width_min_pixels=3, get_width=5
                                         ))
+                                        route_anim = {"stops": ordered_stops, "route": full_route_coords, "idx": stop_end_idx}
                                         st.success("✨ 최적 도로 경로가 지도에 표시되었습니다!")
 
                         view_state = pdk.ViewState(
@@ -603,7 +799,21 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                             initial_view_state=view_state,
                             tooltip={"html": "{tooltip}", "style": {"backgroundColor": "white", "color": "black"}}
                         )
-                        st.pydeck_chart(deck_obj)
+                        if route_anim is not None:
+                            st.components.v1.html(
+                                build_route_html(start_lat, start_lon, route_anim["stops"], route_anim["route"],
+                                                 route_anim["idx"], dark=(map_style_ui == "다크 모드 (기본)")),
+                                height=660
+                            )
+                            st.markdown("**🚩 방문 순서** (🏢 대성에너지 서부지사 출발 → 가까운 업체부터 차례로 방문)")
+                            _order_md = "| 순서 | 고객명 | 증감률 | 도로명주소 |\n|:--:|:--|--:|:--|\n"
+                            _order_md += "| 🏢 출발 | 대성에너지 서부지사 | - | - |\n"
+                            for _n, _s in enumerate(route_anim["stops"], start=1):
+                                _order_md += (f"| {_n} | {str(_s['고객명']).replace('|', '/')} | {_s['증감률(%)']:.1f}% | "
+                                              f"{str(_s['도로명주소']).replace('|', '/')} |\n")
+                            st.markdown(_order_md)
+                        else:
+                            st.pydeck_chart(deck_obj)
 
                         st.markdown(
                             f"<br><b>📋 지도 표기 업체 요약표</b> "
