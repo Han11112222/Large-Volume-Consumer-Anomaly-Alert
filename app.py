@@ -163,22 +163,36 @@ def build_long_dict(sheets: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
         long_dict["열량"] = make_long(sheets["계획_열량"], sheets["실적_열량"])
     return long_dict
 
+_USE_COLS = {"고객명", "도로명주소", "용도", "상품명", "업종", "업종분류",
+             "청구년월", "매출년월", "년월", "기준년월", "사용량(mj)", "사용량(m3)"}
+_BIZ_PRODUCTS = ["냉난방용(업무)", "업무난방용", "주한미군"]
+
+
 @st.cache_data(show_spinner=False, max_entries=2)
 def load_repo_usage_csvs(repo_dir_str: str, files_sig: tuple) -> pd.DataFrame:
-    """레포의 가정용외*.csv 를 한 번만 읽고 숫자 정리까지 끝낸 결과를 캐시 (화면 조작 때마다 다시 읽지 않음)"""
+    """레포의 가정용외*.csv 를 한 번만 읽고 숫자 정리까지 끝낸 결과를 캐시.
+    메모리 절약: 대시보드가 쓰는 열만 읽고, 분석 대상(산업용·업무용) 행만 남긴다."""
     csv_list = []
     for fp in files_sig:
         p = Path(repo_dir_str) / fp[0]
         temp_df = None
         for enc in ("utf-8-sig", "cp949"):
             try:
-                temp_df = pd.read_csv(p, encoding=enc, thousands=',')
+                temp_df = pd.read_csv(p, encoding=enc, thousands=',',
+                                      usecols=lambda c: str(c).strip() in _USE_COLS)
                 break
             except Exception:
                 temp_df = None
-        if temp_df is not None:
-            temp_df.columns = temp_df.columns.str.strip()
-            csv_list.append(temp_df)
+        if temp_df is None:
+            continue
+        temp_df.columns = temp_df.columns.str.strip()
+        if "용도" in temp_df.columns:
+            keep = temp_df["용도"].isin(["산업용", "업무용"])
+            if "상품명" in temp_df.columns:
+                prod = temp_df["상품명"].astype(str).str.replace(r"\s+", "", regex=True)
+                keep = keep | (prod == "산업용") | prod.isin(_BIZ_PRODUCTS)
+            temp_df = temp_df[keep]
+        csv_list.append(temp_df)
     if not csv_list:
         return pd.DataFrame()
     out = pd.concat(csv_list, ignore_index=True)
@@ -294,7 +308,8 @@ html,body{margin:0;height:100%;font-family:"Malgun Gothic","Apple SD Gothic Neo"
      border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.55);box-sizing:border-box;}
 .pin.num{width:28px;height:28px;background:#ff5252;color:#fff;font-size:14px;}
 .pin.num.visited{background:#2ecc71;}
-.pin.start{width:36px;height:36px;background:#ffc107;font-size:19px;border-color:#000;}
+.pin.start{width:40px;height:40px;background:#ffd600;font-size:21px;border-color:#000;box-shadow:0 0 0 4px rgba(255,214,0,.45),0 1px 5px rgba(0,0,0,.55);}
+.startlbl{background:#ffd600;color:#000;border:1px solid #000;font-weight:700;font-size:12px;padding:2px 6px;}
 #ctl{position:absolute;top:10px;right:10px;z-index:1000;background:rgba(255,255,255,.94);border-radius:8px;
      padding:7px 10px;font-size:13px;box-shadow:0 1px 6px rgba(0,0,0,.4);color:#222;}
 #ctl button{font-size:13px;padding:4px 9px;margin-right:4px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;}
@@ -328,9 +343,9 @@ const head = L.polyline([], {color:'#2ecc71', weight:5, opacity:0.95}).addTo(map
 
 // 출발지
 L.marker([START.lat, START.lon], {
-  icon: L.divIcon({className:'', html:'<div class="pin start">🏢</div>', iconSize:[36,36], iconAnchor:[18,18]}),
+  icon: L.divIcon({className:'', html:'<div class="pin start">🏢</div>', iconSize:[40,40], iconAnchor:[20,20]}),
   zIndexOffset: 500
-}).addTo(map).bindTooltip('🏢 대성에너지 서부지사 (출발지)', {direction:'top', offset:[0,-18]});
+}).addTo(map).bindTooltip('🏢 대성에너지 서부지사 (출발)', {permanent:true, direction:'bottom', offset:[0,20], className:'startlbl'});
 
 // 방문 순서 번호
 const pins = STOPS.map(s => {
@@ -609,7 +624,12 @@ for idx, rpt_tab in enumerate(rpt_tabs):
                     _csv_tgt = df_csv_tab[_m_tgt]
             _csv_pos = (_csv_tgt[pd.to_numeric(_csv_tgt[val_col], errors="coerce").fillna(0) > 0]
                         if val_col in _csv_tgt.columns else _csv_tgt)
-            csv_max_date = (_csv_pos if not _csv_pos.empty else df_csv_tab)["날짜_파싱"].max()
+            _csv_base = _csv_pos if not _csv_pos.empty else df_csv_tab
+            _cnt = _csv_base.groupby("날짜_파싱").size()
+            if not _cnt.empty:   # 월별 건수가 최대 월의 10% 미만인 달(늦게 청구된 소수 건)은 '실적 있는 달'로 보지 않음
+                _cnt = _cnt[_cnt >= _cnt.max() * 0.1]
+                _csv_base = _csv_base[_csv_base["날짜_파싱"].isin(_cnt.index)]
+            csv_max_date = _csv_base["날짜_파싱"].max()
             if pd.notna(csv_max_date):
                 _ym = (int(csv_max_date.year), int(csv_max_date.month))
                 if excel_latest_ym is not None:   # 엑셀 실적이 더 이전 월까지만 있으면 그 월을 기본값으로
