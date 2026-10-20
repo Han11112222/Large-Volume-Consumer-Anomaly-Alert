@@ -288,10 +288,12 @@ def build_route_html(start_lat, start_lon, stops, route_lonlat, stop_idx, dark=T
             "lat": float(s["lat"]), "lon": float(s["lon"]),
             "idx": idx_map[min(int(i), len(idx_map) - 1)] if idx_map else 0,
         })
-    tile = ("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" if dark
-            else "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png")
+    # 배경 지도: 기존 pydeck 지도와 같은 Carto 벡터 스타일(키 불필요). 실패하면 OSM 타일로 대체.
+    style = ("https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json" if dark
+             else "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json")
     data = {"start": {"lat": float(start_lat), "lon": float(start_lon)},
-            "route": pts, "stops": stops_json, "tile": tile}
+            "route": pts, "stops": stops_json, "style": style,
+            "tile": "https://tile.openstreetmap.org/{z}/{x}/{y}.png", "dark": bool(dark)}
     data_js = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
     return ROUTE_HTML_TEMPLATE.replace("__DATA__", data_js)
 
@@ -301,9 +303,13 @@ ROUTE_HTML_TEMPLATE = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css"/>
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
 <style>
 html,body{margin:0;height:100%;font-family:"Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif;}
 #map{position:absolute;top:0;left:0;right:0;bottom:0;background:#111;}
+#map.darkosm .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.9);}
 .pin{display:flex;align-items:center;justify-content:center;border-radius:50%;font-weight:700;
      border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.55);box-sizing:border-box;}
 .pin.num{width:28px;height:28px;background:#ff5252;color:#fff;font-size:14px;}
@@ -333,9 +339,26 @@ const START = DATA.start, ROUTE = DATA.route, STOPS = DATA.stops;
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 const map = L.map('map', {preferCanvas:true, zoomSnap:0.25});
-L.tileLayer(DATA.tile, {subdomains:'abcd', maxZoom:19, attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
 const all = ROUTE.concat([[START.lat, START.lon]], STOPS.map(s => [s.lat, s.lon]));
 map.fitBounds(L.latLngBounds(all), {padding:[55,55]});
+let _fb = false;
+function useFallbackTiles(){
+  if (_fb) return; _fb = true;
+  L.tileLayer(DATA.tile, {maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
+  if (DATA.dark) document.getElementById('map').classList.add('darkosm');
+}
+map.attributionControl.addAttribution('&copy; OpenStreetMap &copy; CARTO');
+try {
+  if (typeof L.maplibreGL === 'function' && window.maplibregl) {
+    const gl = L.maplibreGL({style: DATA.style}).addTo(map);
+    const gm = gl.getMaplibreMap();
+    let glOK = false;
+    const glFail = () => { if (!glOK && !gm.isStyleLoaded() && !_fb) { try { map.removeLayer(gl); } catch(e){} useFallbackTiles(); } };
+    gm.on('load', () => { glOK = true; });
+    gm.on('error', (ev) => { console.warn('basemap', ev && ev.error && ev.error.message); setTimeout(glFail, 1500); });
+    setTimeout(glFail, 8000);
+  } else { useFallbackTiles(); }
+} catch (e) { console.warn("basemap-exc " + e); useFallbackTiles(); }
 
 L.polyline(ROUTE, {color:'#2ecc71', weight:4, opacity:0.35}).addTo(map);
 const done = L.polyline([], {color:'#2ecc71', weight:5, opacity:0.95}).addTo(map);
